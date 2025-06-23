@@ -1,10 +1,23 @@
-# PB_RM_Simulation
+# 哨兵导航系统 (Sentry Navigation)
 
 深圳北理莫斯科大学 北极熊战队 哨兵导航仿真/实车包
+
+> **版本更新 (2025.06)**: 
+> - 重构启动文件架构，采用统一配置文件管理
+> - 完善错误处理和参数验证机制  
+> - 添加详细的代码注释和使用文档
+> - 优化节点启动顺序和时序控制
 
 ## 一. 项目介绍
 
 本项目使用全向移动小车，附加 Livox Mid360 雷达与 IMU，在 RMUC/RMUL 地图进行导航算法仿真，仅需要调整参数即可移植到真实机器人中导航。
+
+**新特性**:
+- ✅ 统一配置文件管理，告别复杂命令行参数
+- ✅ 模块化启动文件设计，易于维护和扩展  
+- ✅ 完善的参数验证和错误处理机制
+- ✅ 详细的代码注释和使用文档
+- ✅ 支持多种算法组合的灵活切换
 
 早期功能演示视频：[寒假在家，怎么调车！？更适合新手宝宝的 RM 导航仿真](https://b23.tv/xSNQGmb)
 
@@ -74,105 +87,349 @@
 
 ## 三. 运行
 
-### 3.1 可选参数
+### 3.1 启动文件说明
 
-1. `world`:
+本项目提供了统一的启动系统，所有配置参数都可以通过修改 `launch_params.yaml` 文件来设置，无需在命令行中传递大量参数。
 
-    - 仿真模式
-        - `RMUL` - [2024 Robomaster 3V3 场地](https://bbs.robomaster.com/forum.php?mod=viewthread&tid=22942&extra=page%3D1)
-        - `RMUC` - [2024 Robomaster 7V7 场地](https://bbs.robomaster.com/forum.php?mod=viewthread&tid=22942&extra=page%3D1)
+#### 3.1.1 配置文件结构
 
-    - 真实环境
-        - 自定，world 等价于 `.pcd(ICP使用的点云图)` 文件和 `.yaml(Nav使用的栅格地图)` 的名称
+主要配置文件位于 `src/rm_nav_bringup/config/launch_params.yaml`：
 
-2. `mode`:
-   - `mapping` - 边建图边导航
-   - `nav` - 已知全局地图导航
+```yaml
+# 世界环境名称
+world: "RMUL"
 
-3. `lio`:
-   - `fastlio` - 使用 [Fast_LIO](https://github.com/LihanChen2004/FAST_LIO/tree/ROS2)，里程计约 10Hz
-   - `pointlio` - 使用 [Point_LIO](https://github.com/LihanChen2004/Point-LIO/tree/RM2024_SMBU_auto_sentry)，可以输出100+Hz的Odometry，对导航更友好，但相对的，CPU占用会更高
+# 运行模式: mapping(建图) 或 nav(导航)  
+mode: "mapping"
 
-4. `localization` (仅 `mode:=nav` 时本参数有效)
-   - `slam_toolbox` - 使用 [slam_toolbox](https://github.com/SteveMacenski/slam_toolbox) localization 模式定位，动态场景中效果更好
-   - `amcl` - 使用 [AMCL](https://navigation.ros.org/configuration/packages/configuring-amcl.html) 经典算法定位
-   - `icp` - 使用 [icp_registration](https://github.com/baiyeweiguang/CSU-RM-Sentry/tree/main/src/rm_localization/icp_registration)，仅在第一次启动或者手动设置 /initialpose 时进行点云配准。获得初始位姿后只依赖 LIO 进行定位，没有回环检测，在长时间运行后可能会出现累积误差。
+# LIO算法: fastlio 或 pointlio
+lio: "fastlio"
 
-    Tips:
-    1. 若使用 AMCL 算法定位时，启动后需要在 rviz2 中手动给定初始位姿。
-    2. 若使用 slam_toolbox 定位，需要提供 .posegraph 地图，详见 [如何保存 .pgm 和 .posegraph 地图？](https://gitee.com/SMBU-POLARBEAR/pb_rmsimulation/issues/I9427I)
-    3. 若使用 ICP_Localization 定位，需要提供 .pcd 点云图
+# 定位算法: slam_toolbox, amcl 或 icp (仅nav模式生效)
+localization: "slam_toolbox"
 
-5. `lio_rviz`:
-   - `True` - 可视化 FAST_LIO 或 Point_LIO 的点云图
+# 环境类型: true(仿真) 或 false(真实)
+use_sim: true
 
-6. `nav_rviz`:
-   - `True` - 可视化 navigation2
+# 可视化选项
+use_lio_rviz: false  # LIO点云可视化
+use_nav_rviz: true   # Navigation2可视化
 
-### 3.2 仿真模式示例
+# 雷达坐标变换参数
+base_link2livox_frame:
+  xyz: "\"0.12 0.0 0.175\""
+  rpy: "\"0.0  0.0  0.0\""
+```
 
-- 边建图边导航
+#### 3.1.2 启动方式
 
-    ```sh
-    ros2 launch rm_nav_bringup bringup_sim.launch.py \
-    world:=RMUL \
-    mode:=mapping \
-    lio:=fastlio \
-    lio_rviz:=False \
-    nav_rviz:=True
-    ```
+修改配置文件后，使用统一的启动命令：
 
-- 已知全局地图导航
+```bash
+# 启动完整导航系统
+ros2 launch rm_nav_bringup bringup.launch.py
+```
 
-    ```sh
-    ros2 launch rm_nav_bringup bringup_sim.launch.py \
-    world:=RMUL \
-    mode:=nav \
-    lio:=fastlio \
-    localization:=slam_toolbox \
-    lio_rviz:=False \
-    nav_rviz:=True
-    ```
+### 3.2 配置参数详解
 
-### 3.3 真实模式示例
+1. **world** - 世界环境名称:
+   - 仿真模式:
+     - `RMUL` - [2024 Robomaster 3V3 场地](https://bbs.robomaster.com/forum.php?mod=viewthread&tid=22942&extra=page%3D1)
+     - `RMUC` - [2024 Robomaster 7V7 场地](https://bbs.robomaster.com/forum.php?mod=viewthread&tid=22942&extra=page%3D1)
+   - 真实环境:
+     - 自定义名称，对应 `.pcd`(ICP点云图) 和 `.yaml`(栅格地图) 文件名
 
-- 边建图边导航
+2. **mode** - 运行模式:
+   - `mapping` - 边建图边导航模式，使用SLAM实时构建地图
+   - `nav` - 导航模式，使用预构建地图进行定位和导航
 
-    ```sh
-    ros2 launch rm_nav_bringup bringup_real.launch.py \
-    world:=YOUR_WORLD_NAME \
-    mode:=mapping  \
-    lio:=fastlio \
-    lio_rviz:=False \
-    nav_rviz:=True
-    ```
+3. **lio** - 激光雷达惯性里程计算法:
+   - `fastlio` - [FAST-LIO](https://github.com/LihanChen2004/FAST_LIO/tree/ROS2)，基于卡尔曼滤波，计算效率高，里程计约10Hz
+   - `pointlio` - [Point-LIO](https://github.com/LihanChen2004/Point-LIO/tree/RM2024_SMBU_auto_sentry)，基于点特征，可输出100+Hz里程计，对导航更友好但CPU占用更高
 
-    Tips:
+4. **localization** - 定位算法 (仅在 `mode: nav` 时生效):
+   - `slam_toolbox` - 使用 [SLAM工具箱](https://github.com/SteveMacenski/slam_toolbox) 定位模式，动态场景效果更好
+   - `amcl` - 使用 [AMCL](https://navigation.ros.org/configuration/packages/configuring-amcl.html) 蒙特卡罗定位算法
+   - `icp` - 使用 [ICP点云配准](https://github.com/baiyeweiguang/CSU-RM-Sentry/tree/main/src/rm_localization/icp_registration) 定位，仅初始化时配准，长期运行可能累积误差
 
-    1. 保存点云 pcd 文件：需先在 [fastlio_mid360.yaml](src/rm_nav_bringup/config/reality/fastlio_mid360_real.yaml) 中 将 `pcd_save_en` 改为 `true`，并设置 .pcd 文件的路径，运行时新开终端输入命令 `ros2 service call /map_save std_srvs/srv/Trigger`，即可保存点云文件。
-    2. 保存地图：请参考 [如何保存 .pgm 和 .posegraph 地图？](https://gitee.com/SMBU-POLARBEAR/pb_rmsimulation/issues/I9427I)。地图名需要与 `YOUR_WORLD_NAME` 保持一致。
+5. **use_sim** - 环境类型:
+   - `true` - 启动Gazebo仿真环境
+   - `false` - 使用真实硬件环境
 
-- 已知全局地图导航
+6. **可视化选项**:
+   - `use_lio_rviz` - 是否启动LIO算法的RViz点云可视化
+   - `use_nav_rviz` - 是否启动Navigation2的RViz导航可视化
 
-    ```sh
-    ros2 launch rm_nav_bringup bringup_real.launch.py \
-    world:=YOUR_WORLD_NAME \
-    mode:=nav \
-    lio:=fastlio \
-    localization:=slam_toolbox \
-    lio_rviz:=False \
-    nav_rviz:=True
-    ```
+#### 重要提示:
+1. **AMCL定位**: 启动后需在RViz中手动设置初始位姿
+2. **SLAM工具箱定位**: 需要提供 `.posegraph` 地图文件
+3. **ICP定位**: 需要提供 `.pcd` 点云地图文件
 
-    Tips: 栅格地图文件和 pcd 文件需具为相同名称，分别存放在 `src/rm_nav_bringup/map` 和 `src/rm_nav_bringup/PCD` 中，启动导航时 world 指定为文件名前缀即可。
+### 3.3 使用示例
 
-### 3.4 小工具 - 键盘控制
+#### 3.3.1 仿真环境示例
 
-```sh
+1. **仿真建图模式**:
+   ```bash
+   # 编辑 launch_params.yaml
+   world: "RMUL"
+   mode: "mapping"
+   lio: "fastlio"
+   use_sim: true
+   use_lio_rviz: false
+   use_nav_rviz: true
+   
+   # 启动
+   ros2 launch rm_nav_bringup bringup.launch.py
+   ```
+
+2. **仿真导航模式**:
+   ```bash
+   # 编辑 launch_params.yaml
+   world: "RMUL"
+   mode: "nav"
+   lio: "fastlio"
+   localization: "slam_toolbox"
+   use_sim: true
+   use_lio_rviz: false
+   use_nav_rviz: true
+   
+   # 启动
+   ros2 launch rm_nav_bringup bringup.launch.py
+   ```
+
+#### 3.3.2 真实环境示例
+
+1. **真实环境建图**:
+   ```bash
+   # 编辑 launch_params.yaml
+   world: "YOUR_WORLD_NAME"
+   mode: "mapping"
+   lio: "fastlio"
+   use_sim: false
+   use_lio_rviz: false
+   use_nav_rviz: true
+   
+   # 启动
+   ros2 launch rm_nav_bringup bringup.launch.py
+   ```
+
+   **建图完成后的保存操作**:
+   - 保存点云地图: `ros2 service call /map_save std_srvs/srv/Trigger`
+   - 保存栅格地图: 参考 [如何保存 .pgm 和 .posegraph 地图？](https://gitee.com/SMBU-POLARBEAR/pb_rmsimulation/issues/I9427I)
+
+2. **真实环境导航**:
+   ```bash
+   # 编辑 launch_params.yaml
+   world: "YOUR_WORLD_NAME"
+   mode: "nav"
+   lio: "fastlio"
+   localization: "slam_toolbox"
+   use_sim: false
+   use_lio_rviz: false
+   use_nav_rviz: true
+   
+   # 启动
+   ros2 launch rm_nav_bringup bringup.launch.py
+   ```
+
+   **注意**: 确保栅格地图文件 `YOUR_WORLD_NAME.yaml` 存放在 `src/rm_nav_bringup/map/` 目录，点云地图文件 `YOUR_WORLD_NAME.pcd` 存放在 `src/rm_nav_bringup/PCD/` 目录。
+
+### 3.4 启动文件架构说明
+
+项目采用模块化启动文件设计：
+
+- **`bringup.launch.py`** - 主启动文件，调用通用模块
+- **`common.py`** - 通用模块，包含所有节点定义和参数配置
+- **`launch_params.yaml`** - 统一配置文件，所有启动参数集中管理
+
+这种设计的优势：
+1. **配置集中化** - 所有参数在一个文件中管理
+2. **代码复用** - 仿真和真实环境共享相同的节点定义
+3. **易于维护** - 修改配置无需修改代码，降低出错概率
+4. **灵活组合** - 可以轻松切换不同的算法组合
+
+### 3.5 启动文件问题排查
+
+#### 3.5.1 常见问题及解决方案
+
+1. **配置文件找不到**:
+   ```
+   错误: FileNotFoundError: launch_params.yaml not found
+   解决: 确保 launch_params.yaml 文件存在于 src/rm_nav_bringup/config/ 目录
+   ```
+
+2. **参数验证失败**:
+   ```
+   错误: Invalid mode: xxx. Must be one of: mapping, nav
+   解决: 检查 launch_params.yaml 中的参数值是否正确
+   ```
+
+3. **仿真环境启动失败**:
+   ```
+   错误: start_rm_simulation not defined
+   解决: 确保仿真相关的启动文件存在，检查 common.py 中的导入
+   ```
+
+4. **真实硬件连接问题**:
+   ```
+   错误: Livox雷达连接失败
+   解决: 检查 MID360_config.json 中的IP配置，确保网络连接正常
+   ```
+
+#### 3.5.2 调试技巧
+
+1. **查看启动参数**:
+   启动时会在终端输出当前配置参数，确认配置是否正确。
+
+2. **分步调试**:
+   可以在 `common.py` 中注释掉部分节点，逐步启动来定位问题。
+
+3. **日志输出**:
+   所有节点都设置了 `output="screen"`，可以查看详细的运行日志。
+
+4. **话题检查**:
+   ```bash
+   # 检查话题是否正常发布
+   ros2 topic list
+   ros2 topic echo /topic_name
+   ```
+
+### 3.6 小工具 - 键盘控制
+
+```bash
 ros2 run teleop_twist_keyboard teleop_twist_keyboard
 ```
 
-## 四. 实车适配关键参数
+## 四. 启动文件详细说明
+
+### 4.1 代码架构设计
+
+本项目采用模块化设计，将启动逻辑分为三个主要文件：
+
+#### 4.1.1 文件结构
+```
+src/rm_nav_bringup/launch/
+├── bringup.launch.py          # 主启动文件
+├── common.py                  # 通用节点定义和配置
+└── config/
+    └── launch_params.yaml     # 统一配置文件
+```
+
+#### 4.1.2 设计原则
+
+1. **配置与代码分离**: 所有可变参数集中在 `launch_params.yaml` 中
+2. **代码复用**: 仿真和真实环境共享相同的节点定义
+3. **模块化**: 功能按类型分组，便于维护和扩展
+4. **错误处理**: 完善的参数验证和异常处理机制
+
+### 4.2 关键组件说明
+
+#### 4.2.1 common.py 模块
+
+**参数加载与验证**:
+- 使用 YAML 加载配置文件
+- 对所有关键参数进行有效性验证
+- 提供默认值和错误提示
+
+**节点分类管理**:
+- **基础功能节点**: 地面分割、点云转换、IMU滤波等
+- **LIO算法节点**: FAST-LIO 和 Point-LIO
+- **定位算法节点**: SLAM工具箱、AMCL、ICP定位
+- **环境相关节点**: 仿真环境和真实硬件驱动
+
+**坐标变换管理**:
+- 机器人描述生成 (URDF)
+- 静态坐标变换发布
+- 动态坐标变换处理
+
+#### 4.2.2 bringup.launch.py 主启动文件
+
+**启动逻辑**:
+1. 根据 `use_sim` 参数选择环境类型
+2. 启动基础功能节点
+3. 根据 `lio` 参数启动相应的LIO算法
+4. 根据 `mode` 和 `localization` 参数启动定位系统
+5. 启动 Navigation2 导航系统
+
+**时序控制**:
+- ICP定位延迟启动（等待LIO稳定）
+- 节点启动顺序优化
+- 异常处理和重启机制
+
+### 4.3 配置文件说明
+
+#### 4.3.1 launch_params.yaml 结构详解
+
+```yaml
+# ========= 环境配置 =========
+world: "RMUL"                    # 世界名称，对应地图文件前缀
+use_sim: true                    # 环境类型选择
+
+# ========= 算法配置 =========  
+mode: "mapping"                  # 运行模式选择
+lio: "fastlio"                   # LIO算法选择
+localization: "slam_toolbox"     # 定位算法选择
+
+# ========= 可视化配置 =========
+use_lio_rviz: false             # LIO可视化开关
+use_nav_rviz: true              # 导航可视化开关
+
+# ========= 硬件配置 =========
+base_link2livox_frame:          # 雷达坐标变换
+  xyz: "\"0.12 0.0 0.175\""    # 位置偏移
+  rpy: "\"0.0  0.0  0.0\""     # 姿态偏移
+```
+
+#### 4.3.2 参数配置指导
+
+**世界环境配置**:
+- 仿真: 选择预设的 RMUL 或 RMUC 场地
+- 真实: 设置自定义名称，确保对应的地图文件存在
+
+**算法组合推荐**:
+- 高精度建图: `fastlio + mapping`
+- 高频导航: `pointlio + nav + slam_toolbox`
+- 静态环境: `fastlio + nav + icp`
+- 动态环境: `fastlio + nav + amcl`
+
+**性能优化建议**:
+- CPU性能一般: 关闭 `use_lio_rviz`，使用 `fastlio`
+- 高精度要求: 使用 `pointlio`，开启相关可视化
+- 实时性要求: 使用 `icp` 定位，关闭不必要的可视化
+
+### 4.4 启动文件的改进
+
+相比传统的启动方式，本项目的改进包括：
+
+#### 4.4.1 问题解决
+
+**原有问题**:
+- 参数传递复杂，命令行参数过多
+- 配置分散，难以统一管理  
+- 代码重复，维护困难
+- 缺乏参数验证，容易出错
+
+**改进方案**:
+- 统一配置文件，简化启动命令
+- 模块化设计，提高代码复用性
+- 完善的错误处理和提示信息
+- 详细的代码注释和文档
+
+#### 4.4.2 扩展性设计
+
+**新算法接入**:
+1. 在 `common.py` 中添加节点定义
+2. 在配置文件中添加相应参数选项
+3. 在主启动文件中添加条件启动逻辑
+
+**新功能模块**:
+- 传感器融合模块
+- 多机器人协作模块  
+- 高级规划算法模块
+- 安全监控模块
+
+## 五. 实车适配关键参数
 
 1. 雷达 ip
 
