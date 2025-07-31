@@ -4,17 +4,17 @@
 # 本配置文件用于设定哨兵导航系统的启动参数，支持不同的运行模式和算法组合
 
 # 世界环境名称 - 对应map文件夹中的地图文件名
-world: "RMUL"
+world: "RMUC_25"
 
 # 运行模式选择
 # - "mapping": 建图模式，使用SLAM算法进行环境地图构建
 # - "nav": 导航模式，使用预构建地图进行自主导航
-mode: "mapping"
+mode: "nav"
 
 # 激光雷达惯性里程计(LIO)算法选择
 # - "fastlio": FAST-LIO算法，基于卡尔曼滤波器，计算效率高
 # - "pointlio": Point-LIO算法，基于点特征匹配，精度较高
-lio: "pointlio"
+lio: "fastlio"
 
 # 定位算法选择 (仅在nav模式下有效)
 # - "slam_toolbox": 使用SLAM工具箱进行定位

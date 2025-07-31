@@ -2,7 +2,7 @@
 
 import os
 
-from ament_index_python.packages import get_package_share_directory, get_package_share_path
+from ament_index_python.packages import get_package_share_directory
 
 from launch import LaunchDescription
 from launch.substitutions import LaunchConfiguration, Command
@@ -15,25 +15,33 @@ from launch.actions.append_environment_variable import AppendEnvironmentVariable
 
 # Enum for world types
 class WorldType:
-    RMUC = 'RMUC'
-    RMUL = 'RMUL'
+    RMUC_24 = 'RMUC_24'
+    RMUL_24 = 'RMUL_24'
+    RMUC_25 = 'RMUC_25'
 
 def get_world_config(world_type):
     world_configs = {
-        WorldType.RMUC: {
+        WorldType.RMUC_24: {
             'x': '6.35',
             'y': '7.6',
             'z': '0.2',
             'yaw': '0.0',
             'world_path': 'RMUC2024_world/RMUC2024_world.world'
         },
-        WorldType.RMUL: {
+        WorldType.RMUL_24: {
             'x': '4.3',
             'y': '3.35',
             'z': '1.16',
             'yaw': '0.0',
             'world_path': 'RMUL2024_world/RMUL2024_world.world'
             # 'world_path': 'RMUL2024_world/RMUL2024_world_dynamic_obstacles.world'
+        },
+        WorldType.RMUC_25: {
+            'x': '1.0',
+            'y': '11.0',
+            'z': '0.2',
+            'yaw': '1.57079632679',
+            'world_path': 'RMUC2025_world/RMUC2025_world.world'
         }
     }
     return world_configs.get(world_type, None)
@@ -66,8 +74,8 @@ def generate_launch_description():
 
     declare_world_cmd = DeclareLaunchArgument(
         'world',
-        default_value=WorldType.RMUC,
-        description='Choose <RMUC> or <RMUL>'
+        default_value=WorldType.RMUC_24,
+        description='Choose <RMUC_24> or <RMUL_24> or <RMUC_25>'
     )
 
     declare_rviz_config_file_cmd = DeclareLaunchArgument(
@@ -144,8 +152,9 @@ def generate_launch_description():
             ]
         )
 
-    bringup_RMUC_cmd_group = create_gazebo_launch_group(WorldType.RMUC)
-    bringup_RMUL_cmd_group = create_gazebo_launch_group(WorldType.RMUL)
+    bringup_RMUC_24_cmd_group = create_gazebo_launch_group(WorldType.RMUC_24)
+    bringup_RMUL_24_cmd_group = create_gazebo_launch_group(WorldType.RMUL_24)
+    bringup_RMUC_25_cmd_group = create_gazebo_launch_group(WorldType.RMUC_25)
 
     # Create the launch description and populate
     ld = LaunchDescription()
@@ -160,8 +169,9 @@ def generate_launch_description():
     ld.add_action(gazebo_client_launch)
     ld.add_action(start_joint_state_publisher_cmd)
     ld.add_action(start_robot_state_publisher_cmd)
-    ld.add_action(bringup_RMUL_cmd_group) # type: ignore
-    ld.add_action(bringup_RMUC_cmd_group) # type: ignore
+    ld.add_action(bringup_RMUL_24_cmd_group) # type: ignore
+    ld.add_action(bringup_RMUC_24_cmd_group) # type: ignore
+    ld.add_action(bringup_RMUC_25_cmd_group) # type: ignore
 
     # Uncomment this line if you want to start RViz
     ld.add_action(start_rviz_cmd)
