@@ -1,0 +1,29 @@
+/small_gicp_registration:
+  ros__parameters:
+    # Point cloud data source
+    pointcloud_topic: "/livox/lidar/pointcloud"
+    
+    # Reference map file path (will be overridden by launch parameter)
+    pcd_path: ""
+    
+    # Frame IDs
+    map_frame_id: "map"
+    odom_frame_id: "odom"
+    range_odom_frame_id: "lidar_odom"
+    laser_frame_id: "livox_frame"
+    
+    # Small GICP registration parameters
+    downsampling_resolution: 0.25    # Voxel size for downsampling (meters)
+    max_correspondence_distance: 1.0  # Maximum distance for point correspondences
+    num_threads: 4                   # Number of threads for parallel processing
+    convergence_threshold: 0.01      # Convergence criteria
+    max_iterations: 30               # Maximum number of iterations
+    
+    # Multi-candidate search parameters
+    xy_search_range: 0.5             # Search range in X-Y plane (meters)
+    yaw_search_range: 30.0           # Search range in yaw angle (degrees)
+    xy_step: 0.1                     # Step size for X-Y search (meters)
+    yaw_step: 10.0                   # Step size for yaw search (degrees)
+    
+    # Initial pose [x, y, z, roll, pitch, yaw] (meters, radians)
+    initial_pose: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]

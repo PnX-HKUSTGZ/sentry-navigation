@@ -39,7 +39,7 @@ use_lio_rviz = launch_params.get("use_lio_rviz", False)  # 可视化 FAST_LIO �
 # 参数验证
 valid_modes = ["mapping", "nav"]
 valid_lio_types = ["fastlio", "pointlio"]
-valid_localization_types = ["amcl", "slam_toolbox", "icp"]
+valid_localization_types = ["amcl", "slam_toolbox", "icp", "small_gicp"]
 
 if mode not in valid_modes:
     raise ValueError(f"无效的mode参数: {mode}. 有效值: {valid_modes}")
@@ -130,6 +130,12 @@ icp_pcd_dir = os.path.join(rm_nav_bringup_dir, "PCD", world + ".pcd")
 icp_registration_params_dir = os.path.join(
     config_dir, "icp_registration.yaml"
 )
+
+# ============================= small_gicp_registration parameters ========================
+small_gicp_pcd_dir = os.path.join(rm_nav_bringup_dir, "PCD", world + ".pcd")
+small_gicp_registration_params_dir = os.path.join(
+    config_dir, "small_gicp_registration.yaml"
+)
 # =================================== 点云处理节点定义 =========================================
 
 # 地面分割节点 - 使用线性拟合算法从点云中分离地面和障碍物
@@ -216,6 +222,19 @@ icp_node = Node(
     ],
     # 可选的调试日志级别
     # arguments=['--ros-args', '--log-level', ['icp_registration:=', 'DEBUG']]
+)
+
+# Small GICP定位节点 - 基于高性能小型GICP算法的点云配准定位
+small_gicp_node = Node(
+    package="small_gicp_registration",
+    executable="small_gicp_registration_node",
+    output="screen",
+    parameters=[
+        small_gicp_registration_params_dir,
+        {"use_sim_time": use_sim_time, "pcd_path": small_gicp_pcd_dir},  # 点云地图路径
+    ],
+    # 可选的调试日志级别
+    # arguments=['--ros-args', '--log-level', ['small_gicp_registration:=', 'DEBUG']]
 )
 
 # 地图服务器启动 - 提供预构建的占用栅格地图

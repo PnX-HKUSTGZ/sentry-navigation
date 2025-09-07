@@ -48,6 +48,7 @@ def generate_launch_description():
         start_map_server,
         slam_toolbox_node,
         icp_node,
+        small_gicp_node,
         start_amcl,
         start_mapping_node,
     )
@@ -113,6 +114,16 @@ def generate_launch_description():
             print("   ICP定位将在7秒后启动...")
             icp_timer = TimerAction(period=7.0, actions=[icp_node, start_map_server])
             ld.add_action(icp_timer)
+
+        elif localization == "small_gicp":
+            # Small GICP定位需要延迟启动，等待LIO稳定
+            print("   Small GICP定位将在7秒后启动...")
+            small_gicp_timer = TimerAction(period=7.0, actions=[small_gicp_node, start_map_server])
+            ld.add_action(small_gicp_timer)
+
+        else:
+            print(f"   警告：未知的定位方法 '{localization}'，将使用默认的slam_toolbox")
+            ld.add_action(slam_toolbox_node)
 
     # 5. 辅助节点
     print("5. 启动辅助节点...")
