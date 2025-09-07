@@ -1,0 +1,200 @@
+# 哨兵导航系统评估模块
+
+## 📋 概述
+
+这是一个完整的自动化评估系统，用于量化对比不同的哨兵导航算法方案。系统支持多种LIO算法和定位方法的组合测试，并生成详细的性能分析报告。
+
+## 🚀 快速开始
+
+### 1. 一键运行完整评估
+
+```bash
+cd /home/nyz/sentry/sentry-navigation
+./run_evaluation.sh
+```
+
+### 2. 自定义评估
+
+```bash
+# 指定测试方法和场景
+./run_evaluation.sh --methods fastlio_slam_toolbox pointlio_icp --scenarios basic_navigation high_dynamic
+
+# 调试模式（运行单个测试）
+./run_evaluation.sh --single-test
+
+# 查看帮助
+./run_evaluation.sh --help
+```
+
+### 3. 手动运行
+
+```bash
+# 设置环境
+source install/setup.bash
+
+# 运行基准测试
+python3 src/rm_nav_bringup/scripts/run_benchmark.py \
+    --methods fastlio_slam_toolbox pointlio_slam_toolbox pointlio_icp \
+    --scenarios basic_navigation high_dynamic feature_sparse
+
+# 分析结果
+python3 src/rm_nav_bringup/scripts/compare_methods.py \
+    --results-dir ~/sentry_evaluation_results \
+    --generate-charts
+```
+
+## 📊 测试方法
+
+### 支持的算法组合
+
+| 方法名称 | LIO算法 | 定位算法 | 描述 |
+|---------|---------|----------|------|
+| `fastlio_slam_toolbox` | FastLIO | SLAM Toolbox | 当前默认方案 |
+| `pointlio_slam_toolbox` | PointLIO | SLAM Toolbox | 改进方案一 |
+| `pointlio_icp` | PointLIO | ICP | 改进方案二 |
+| `fastlio_amcl` | FastLIO | AMCL | 对比方案 |
+
+### 测试场景
+
+| 场景名称 | 描述 | 测试重点 |
+|---------|------|----------|
+| `basic_navigation` | 基础导航测试 | 直线和简单转弯 |
+| `high_dynamic` | 高动态运动测试 | 高速运动和急转弯 |
+| `feature_sparse` | 特征稀少环境测试 | 长廊等单调环境 |
+| `complex_path` | 复杂路径测试 | 模拟比赛路径 |
+
+## 📈 评估指标
+
+### 精度指标
+- **ATE (绝对轨迹误差)**: 估计轨迹与真实轨迹的全局一致性
+- **RPE (相对位姿误差)**: 局部运动的准确性
+- **轨迹平滑度**: 速度、加速度和加加速度的变化率
+
+### 性能指标
+- **CPU使用率**: 算法对处理器的占用
+- **内存使用**: 算法的内存消耗
+- **处理延迟**: 从传感器输入到位姿输出的时间延迟
+
+### 鲁棒性指标
+- **定位失败次数**: 算法完全跟丢的频率
+- **重定位时间**: 从失去定位到恢复的时间
+- **漂移率**: 位姿估计随时间的累积误差
+
+## 📁 输出结果
+
+评估完成后，结果保存在 `~/sentry_evaluation_results/` 目录下：
+
+```
+sentry_evaluation_results/
+├── evaluation_report_YYYYMMDD_HHMMSS.html    # HTML格式的详细报告
+├── evaluation_data_YYYYMMDD_HHMMSS.json      # JSON格式的原始数据
+├── ate_comparison.png                         # ATE对比图
+├── cpu_comparison.png                         # CPU使用率对比图
+├── memory_comparison.png                     # 内存使用对比图
+├── performance_radar.png                     # 综合性能雷达图
+└── sentry_evaluation_data/                   # 原始数据包和轨迹数据
+    ├── fastlio_slam_toolbox_basic_navigation_TIMESTAMP/
+    ├── fastlio_slam_toolbox_basic_navigation_TIMESTAMP.json
+    └── ...
+```
+
+## ⚙️ 配置
+
+### 修改测试场景
+
+编辑 `src/rm_nav_bringup/evaluation/config/test_scenarios.yaml` 来：
+- 添加新的测试场景
+- 修改现有场景的参数
+- 调整评估指标阈值
+
+### 添加新的算法组合
+
+在 `test_scenarios.yaml` 的 `test_methods` 部分添加新的方法：
+
+```yaml
+test_methods:
+  my_new_method:
+    name: "我的新方法"
+    description: "新算法组合的描述"
+    config:
+      lio: "fastlio"
+      localization: "my_localization"
+```
+
+## 🛠️ 系统要求
+
+### 软件依赖
+- ROS 2 Humble
+- Python 3.8+
+- 必要的Python包：
+  - `psutil` (系统监控)
+  - `matplotlib` (图表生成)
+  - `numpy` (数值计算)
+  - `pyyaml` (配置文件处理)
+  - `evo` (轨迹评估，自动安装)
+
+### 硬件要求
+- 至少4GB RAM
+- 多核CPU（推荐4核以上）
+- 足够的存储空间（每次完整测试约1-2GB）
+
+## 🔍 调试
+
+### 运行单个测试
+```bash
+./run_evaluation.sh --single-test
+```
+
+### 查看详细日志
+```bash
+# 检查ROS节点日志
+ros2 node list
+ros2 topic list
+
+# 查看数据收集状态
+ros2 topic echo /odom --once
+ros2 topic echo /gazebo/model_states --once
+```
+
+### 常见问题
+
+1. **Gazebo启动失败**
+   - 检查是否有其他Gazebo实例在运行
+   - 确保有足够的内存和GPU资源
+
+2. **导航系统无响应**
+   - 检查Nav2是否正确启动
+   - 确认地图文件存在且正确
+
+3. **数据收集为空**
+   - 检查话题名称是否正确
+   - 确认机器人模型在Gazebo中正确加载
+
+## 📚 模块说明
+
+### 核心模块
+
+- **`benchmark_runner.py`**: 主控制器，协调整个测试流程
+- **`data_collector.py`**: 数据收集器，记录ROS话题和轨迹数据
+- **`trajectory_analyzer.py`**: 轨迹分析器，使用evo工具计算精度指标
+- **`performance_monitor.py`**: 性能监控器，监控CPU、内存和延迟
+- **`report_generator.py`**: 报告生成器，生成HTML报告和可视化图表
+
+### 脚本工具
+
+- **`run_benchmark.py`**: 命令行执行脚本
+- **`compare_methods.py`**: 结果分析和对比脚本
+- **`run_evaluation.sh`**: 一键启动脚本
+
+## 🤝 贡献
+
+欢迎提交Issue和Pull Request来改进这个评估系统：
+
+1. 添加新的评估指标
+2. 支持更多的算法组合
+3. 改进可视化效果
+4. 优化性能和稳定性
+
+## 📄 许可证
+
+该项目遵循与主项目相同的许可证。

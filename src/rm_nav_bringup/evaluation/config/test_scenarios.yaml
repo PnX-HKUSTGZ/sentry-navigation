@@ -1,0 +1,118 @@
+# 哨兵导航系统评估测试场景配置
+# ========================================================================
+
+test_scenarios:
+  # 基础性能测试
+  basic_navigation:
+    name: "基础导航测试"
+    description: "直线和简单转弯的基础导航能力测试"
+    world: "RMUC_25"
+    initial_pose: [1.0, 11.0, 0.2, 0.0, 0.0, 1.57079632679]  # x,y,z,roll,pitch,yaw
+    waypoints:
+      - [3.0, 11.0, 0.2]   # 前进2米
+      - [3.0, 9.0, 0.2]    # 右转
+      - [5.0, 9.0, 0.2]    # 前进2米
+      - [5.0, 11.0, 0.2]   # 左转
+      - [1.0, 11.0, 0.2]   # 返回起点
+    max_velocity: 1.5     # 最大速度 m/s
+    max_angular_velocity: 2.0  # 最大角速度 rad/s
+    duration: 120  # 最大测试时间(秒)
+    
+  # 高动态测试
+  high_dynamic:
+    name: "高动态运动测试"
+    description: "高速运动和急转弯的鲁棒性测试"
+    world: "RMUC_25"
+    initial_pose: [6.0, 6.0, 0.2, 0.0, 0.0, 0.0]
+    waypoints:
+      - [10.0, 6.0, 0.2]   # 高速直线
+      - [10.0, 2.0, 0.2]   # 急转弯
+      - [6.0, 2.0, 0.2]    # 高速直线
+      - [6.0, 6.0, 0.2]    # 急转弯返回
+    max_velocity: 3.0     # 最大速度
+    max_angular_velocity: 6.0  # 最大角速度
+    duration: 80
+    
+  # 特征稀少环境测试
+  feature_sparse:
+    name: "特征稀少环境测试"
+    description: "在长廊等特征稀少环境下的定位稳定性测试"
+    world: "RMUC_25"
+    initial_pose: [2.0, 7.5, 0.2, 0.0, 0.0, 0.0]
+    waypoints:
+      - [12.0, 7.5, 0.2]   # 长廊直行
+      - [12.0, 7.5, 0.2]   # 原地旋转测试
+      - [2.0, 7.5, 0.2]    # 返回
+    rotation_test: true    # 包含原地旋转测试
+    max_velocity: 2.0
+    max_angular_velocity: 4.0
+    duration: 100
+
+  # 复杂路径测试
+  complex_path:
+    name: "复杂路径测试"
+    description: "模拟实际比赛中的复杂机动路径"
+    world: "RMUC_25"
+    initial_pose: [1.0, 1.0, 0.2, 0.0, 0.0, 0.0]
+    waypoints:
+      - [5.0, 1.0, 0.2]    # 横向移动
+      - [5.0, 5.0, 0.2]    # 纵向移动
+      - [8.0, 8.0, 0.2]    # 对角线移动
+      - [12.0, 5.0, 0.2]   # 复杂路径
+      - [8.0, 2.0, 0.2]    # 
+      - [4.0, 8.0, 0.2]    # 
+      - [1.0, 5.0, 0.2]    # 
+      - [1.0, 1.0, 0.2]    # 返回起点
+    max_velocity: 2.5
+    max_angular_velocity: 4.0
+    duration: 180
+
+# 评估指标阈值配置
+evaluation_metrics:
+  # 精度指标
+  accuracy:
+    ate_threshold: 0.2     # 绝对轨迹误差阈值(米)
+    rpe_threshold: 0.05    # 相对位姿误差阈值(米/米)
+    angular_error_threshold: 0.1  # 角度误差阈值(弧度)
+    
+  # 鲁棒性指标  
+  robustness:
+    max_localization_failures: 2    # 最大定位失败次数
+    max_relocalization_time: 10.0   # 最大重定位时间(秒)
+    trajectory_smoothness_threshold: 2.0  # 轨迹平滑度阈值
+    
+  # 性能指标
+  performance:
+    max_cpu_usage: 80.0    # 最大CPU使用率(%)
+    max_memory_usage: 2.0  # 最大内存使用(GB)
+    max_processing_latency: 0.1  # 最大处理延迟(秒)
+
+# 测试方法配置
+test_methods:
+  fastlio_slam_toolbox:
+    name: "FastLIO + SLAM Toolbox"
+    description: "当前默认方案：FastLIO里程计 + SLAM Toolbox定位"
+    config:
+      lio: "fastlio"
+      localization: "slam_toolbox"
+      
+  pointlio_slam_toolbox:
+    name: "PointLIO + SLAM Toolbox"
+    description: "改进方案一：PointLIO里程计 + SLAM Toolbox定位"
+    config:
+      lio: "pointlio"
+      localization: "slam_toolbox"
+      
+  pointlio_icp:
+    name: "PointLIO + ICP"
+    description: "改进方案二：PointLIO里程计 + ICP定位"
+    config:
+      lio: "pointlio"
+      localization: "icp"
+      
+  fastlio_amcl:
+    name: "FastLIO + AMCL"
+    description: "对比方案：FastLIO里程计 + AMCL定位"
+    config:
+      lio: "fastlio"
+      localization: "amcl"
