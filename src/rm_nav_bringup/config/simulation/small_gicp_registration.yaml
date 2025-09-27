@@ -1,0 +1,19 @@
+/small_gicp_registration:
+  ros__parameters:
+    use_sim_time: true
+    pointcloud_topic: "/livox/lidar/pointcloud"
+    pcd_path: ""
+    map_frame_id: "map"
+    odom_frame_id: "odom"
+    range_odom_frame_id: "lidar_odom"
+    laser_frame_id: "livox_frame"
+    downsampling_resolution: 0.25
+    max_correspondence_distance: 1.0
+    num_threads: 4
+    convergence_threshold: 0.01
+    max_iterations: 30
+    xy_search_range: 0.5
+    yaw_search_range: 30.0
+    xy_step: 0.1
+    yaw_step: 10.0
+    initial_pose: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]

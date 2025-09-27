@@ -151,6 +151,7 @@ ros2 launch rm_nav_bringup bringup.launch.py
    - `slam_toolbox` - 使用 [SLAM工具箱](https://github.com/SteveMacenski/slam_toolbox) 定位模式，动态场景效果更好
    - `amcl` - 使用 [AMCL](https://navigation.ros.org/configuration/packages/configuring-amcl.html) 蒙特卡罗定位算法
    - `icp` - 使用 [ICP点云配准](https://github.com/baiyeweiguang/CSU-RM-Sentry/tree/main/src/rm_localization/icp_registration) 定位，仅初始化时配准，长期运行可能累积误差
+   - `small_gicp` - 使用 [Small GICP高性能点云配准](https://github.com/koide3/small_gicp) 定位，相比传统ICP提升2倍性能
 
 5. **use_sim** - 环境类型:
    - `true` - 启动Gazebo仿真环境
@@ -164,6 +165,7 @@ ros2 launch rm_nav_bringup bringup.launch.py
 1. **AMCL定位**: 启动后需在RViz中手动设置初始位姿
 2. **SLAM工具箱定位**: 需要提供 `.posegraph` 地图文件
 3. **ICP定位**: 需要提供 `.pcd` 点云地图文件
+4. **Small GICP定位**: 需要提供 `.pcd` 点云地图文件，支持多线程并行处理
 
 ### 3.3 使用示例
 

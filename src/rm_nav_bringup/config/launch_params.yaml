@@ -20,7 +20,8 @@ lio: "fastlio"
 # - "slam_toolbox": 使用SLAM工具箱进行定位
 # - "amcl": 自适应蒙特卡罗定位算法
 # - "icp": 基于迭代最近点算法的点云配准定位
-localization: "slam_toolbox"
+# - "small_gicp": 基于小型GICP算法的高性能点云配准定位
+localization: "small_gicp"
 
 # 环境类型选择
 # - true: 使用Gazebo仿真环境
