@@ -157,23 +157,39 @@ class TrajectoryAnalyzer:
             # 创建临时结果文件
             result_file = tempfile.NamedTemporaryFile(suffix='.zip', delete=False)
             result_file.close()
-            
+
+            # 保存 stdout/stderr 的临时文件，便于调试
+            stdout_file = tempfile.NamedTemporaryFile(mode='w', suffix='_evo_ape_stdout.txt', delete=False)
+            stderr_file = tempfile.NamedTemporaryFile(mode='w', suffix='_evo_ape_stderr.txt', delete=False)
+            stdout_file.close()
+            stderr_file.close()
+
             cmd = [
-                'evo_ape', 'tum', gt_file, est_file, 
+                'evo_ape', 'tum', gt_file, est_file,
                 '--verbose', '--no_plot', '--no_warnings',
                 '--save_results', result_file.name
             ]
-            
+
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-            
+
+            # 将输出写入文件
+            try:
+                with open(stdout_file.name, 'w', encoding='utf-8') as sf:
+                    sf.write(result.stdout or '')
+                with open(stderr_file.name, 'w', encoding='utf-8') as ef:
+                    ef.write(result.stderr or '')
+            except Exception:
+                pass
+
             if result.returncode != 0:
-                print(f"evo_ape执行失败: {result.stderr}")
+                print(f"evo_ape执行失败，请检查: {stderr_file.name}")
+                # 保留 result_file 以便调试
                 return self._fallback_ate_calculation(gt_file, est_file)
-            
-            # 解析结果
+
+            # 解析结果（从 stdout）
             output_lines = result.stdout.split('\n')
             ate_stats = {}
-            
+
             for line in output_lines:
                 line_lower = line.lower()
                 if 'rmse' in line_lower and ':' in line:
@@ -188,10 +204,12 @@ class TrajectoryAnalyzer:
                     ate_stats['min'] = self._extract_number_from_line(line)
                 elif 'max' in line_lower and ':' in line:
                     ate_stats['max'] = self._extract_number_from_line(line)
-            
-            # 清理临时文件
-            Path(result_file.name).unlink(missing_ok=True)
-            
+
+            # 返回并包含生成的文件路径以便追踪
+            ate_stats['evo_result_file'] = result_file.name
+            ate_stats['evo_stdout'] = stdout_file.name
+            ate_stats['evo_stderr'] = stderr_file.name
+
             return ate_stats
             
         except Exception as e:
@@ -203,24 +221,37 @@ class TrajectoryAnalyzer:
         try:
             result_file = tempfile.NamedTemporaryFile(suffix='.zip', delete=False)
             result_file.close()
-            
+
+            stdout_file = tempfile.NamedTemporaryFile(mode='w', suffix='_evo_rpe_stdout.txt', delete=False)
+            stderr_file = tempfile.NamedTemporaryFile(mode='w', suffix='_evo_rpe_stderr.txt', delete=False)
+            stdout_file.close()
+            stderr_file.close()
+
             cmd = [
-                'evo_rpe', 'tum', gt_file, est_file, 
+                'evo_rpe', 'tum', gt_file, est_file,
                 '--delta', '1', '--delta_unit', 's',
                 '--verbose', '--no_plot', '--no_warnings',
                 '--save_results', result_file.name
             ]
-            
+
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-            
+
+            try:
+                with open(stdout_file.name, 'w', encoding='utf-8') as sf:
+                    sf.write(result.stdout or '')
+                with open(stderr_file.name, 'w', encoding='utf-8') as ef:
+                    ef.write(result.stderr or '')
+            except Exception:
+                pass
+
             if result.returncode != 0:
-                print(f"evo_rpe执行失败: {result.stderr}")
+                print(f"evo_rpe执行失败，请检查: {stderr_file.name}")
                 return self._fallback_rpe_calculation(gt_file, est_file)
-            
+
             # 解析结果
             output_lines = result.stdout.split('\n')
             rpe_stats = {}
-            
+
             for line in output_lines:
                 line_lower = line.lower()
                 if 'rmse' in line_lower and ':' in line:
@@ -231,10 +262,11 @@ class TrajectoryAnalyzer:
                     rpe_stats['median'] = self._extract_number_from_line(line)
                 elif 'std' in line_lower and ':' in line:
                     rpe_stats['std'] = self._extract_number_from_line(line)
-            
-            # 清理临时文件
-            Path(result_file.name).unlink(missing_ok=True)
-            
+
+            rpe_stats['evo_result_file'] = result_file.name
+            rpe_stats['evo_stdout'] = stdout_file.name
+            rpe_stats['evo_stderr'] = stderr_file.name
+
             return rpe_stats
             
         except Exception as e:

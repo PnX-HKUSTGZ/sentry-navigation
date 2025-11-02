@@ -133,6 +133,43 @@ test_methods:
   - `pyyaml` (配置文件处理)
   - `evo` (轨迹评估，自动安装)
 
+### 在 CI / 干净环境中安装依赖 (可复制命令)
+下面给出两种常用的安装方式：在 Python 虚拟环境中安装（推荐），以及在基于 Debian/Ubuntu 的系统上先安装系统依赖再安装 Python 包。
+
+1) 使用 Python 虚拟环境（推荐，适用于 CI）
+
+```bash
+# 创建并激活虚拟环境
+python3 -m venv .venv_evaluation
+source .venv_evaluation/bin/activate
+
+# 升级 pip 并安装必需的 Python 包
+pip install --upgrade pip
+pip install numpy matplotlib psutil pyyaml
+
+# evo 有时需要编译其部分依赖，若希望强制从源码安装（与本项目中的自动安装行为一致）：
+pip install evo --upgrade --no-binary evo
+
+# 可选：验证 evo 可用
+evo_ape --help || python -m pip show evo
+```
+
+2) 在 Debian/Ubuntu 系统上（系统依赖 + 虚拟环境或全局安装）
+
+```bash
+# 安装常用系统依赖（在 CI runner 上执行）
+sudo apt-get update && sudo apt-get install -y build-essential python3-dev python3-venv python3-pip libeigen3-dev
+
+# 然后按上面的虚拟环境步骤安装 Python 包
+python3 -m venv .venv_evaluation
+source .venv_evaluation/bin/activate
+pip install --upgrade pip
+pip install numpy matplotlib psutil pyyaml
+pip install evo --upgrade --no-binary evo
+```
+
+注：如果在受限网络或无编译工具的环境中，`pip install evo --no-binary evo` 可能失败。建议在 CI 镜像中预先缓存或使用带有 evo 的基础镜像 / 虚拟环境。若希望避免编译，可尝试 `pip install evo`（允许 wheel 安装），但在某些平台可能没有可用 wheel。
+
 ### 硬件要求
 - 至少4GB RAM
 - 多核CPU（推荐4核以上）

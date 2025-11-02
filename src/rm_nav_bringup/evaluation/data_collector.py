@@ -43,6 +43,27 @@ class DataCollector(Node):
         self.odom_sub = None
         
         self.get_logger().info("数据收集器初始化完成")
+
+    def _ros_time_to_sec(self, stamp) -> float:
+        """将 ROS 时间转换为秒（支持不同字段命名）"""
+        try:
+            # rclpy Header.stamp has sec & nanosec
+            sec = getattr(stamp, 'sec', None)
+            nanosec = getattr(stamp, 'nanosec', None)
+            if sec is not None and nanosec is not None:
+                return float(sec) + float(nanosec) * 1e-9
+
+            # fallback for builtin time type with seconds+nsecs
+            sec = getattr(stamp, 'sec', None)
+            nsec = getattr(stamp, 'nsec', None)
+            if sec is not None and nsec is not None:
+                return float(sec) + float(nsec) * 1e-9
+
+        except Exception:
+            pass
+
+        # 最后退回到节点时钟
+        return self.get_clock().now().nanoseconds / 1e9
     
     def start_recording(self, method: str, scenario: str) -> str:
         """开始记录数据"""
@@ -177,9 +198,21 @@ class DataCollector(Node):
             
             if robot_index is not None:
                 robot_pose = msg.pose[robot_index]
-                
+
+                # 如果消息包含 header，优先使用消息的时间戳
+                timestamp = None
+                try:
+                    header = getattr(msg, 'header', None)
+                    if header is not None:
+                        timestamp = self._ros_time_to_sec(header.stamp)
+                except Exception:
+                    timestamp = None
+
+                if timestamp is None:
+                    timestamp = self.get_clock().now().nanoseconds / 1e9
+
                 pose_data = {
-                    'timestamp': self.get_clock().now().nanoseconds / 1e9,
+                    'timestamp': float(timestamp),
                     'position': {
                         'x': robot_pose.position.x,
                         'y': robot_pose.position.y,
@@ -192,7 +225,7 @@ class DataCollector(Node):
                         'w': robot_pose.orientation.w
                     }
                 }
-                
+
                 self.ground_truth_poses.append(pose_data)
                 
         except Exception as e:
@@ -204,8 +237,18 @@ class DataCollector(Node):
             return
             
         try:
+            # 优先使用消息自带的时间戳
+            try:
+                header = getattr(msg, 'header', None)
+                if header is not None:
+                    timestamp = self._ros_time_to_sec(header.stamp)
+                else:
+                    timestamp = self.get_clock().now().nanoseconds / 1e9
+            except Exception:
+                timestamp = self.get_clock().now().nanoseconds / 1e9
+
             pose_data = {
-                'timestamp': self.get_clock().now().nanoseconds / 1e9,
+                'timestamp': float(timestamp),
                 'position': {
                     'x': msg.pose.pose.position.x,
                     'y': msg.pose.pose.position.y,
@@ -228,15 +271,22 @@ class DataCollector(Node):
         """保存轨迹数据到JSON文件"""
         try:
             trajectory_file = Path(self.current_bag_file).with_suffix('.json')
-            
+            # 确保按照时间戳排序并去除可能的 NaN
+            def _clean_and_sort(poses):
+                cleaned = [p for p in poses if p and isinstance(p.get('timestamp', None), (int, float))]
+                return sorted(cleaned, key=lambda x: x['timestamp'])
+
+            gt_sorted = _clean_and_sort(self.ground_truth_poses)
+            est_sorted = _clean_and_sort(self.estimated_poses)
+
             data = {
-                'ground_truth_poses': self.ground_truth_poses,
-                'estimated_poses': self.estimated_poses,
+                'ground_truth_poses': gt_sorted,
+                'estimated_poses': est_sorted,
                 'collection_info': {
-                    'start_time': self.ground_truth_poses[0]['timestamp'] if self.ground_truth_poses else 0,
-                    'end_time': self.ground_truth_poses[-1]['timestamp'] if self.ground_truth_poses else 0,
-                    'gt_count': len(self.ground_truth_poses),
-                    'est_count': len(self.estimated_poses)
+                    'start_time': gt_sorted[0]['timestamp'] if gt_sorted else 0,
+                    'end_time': gt_sorted[-1]['timestamp'] if gt_sorted else 0,
+                    'gt_count': len(gt_sorted),
+                    'est_count': len(est_sorted)
                 }
             }
             
@@ -244,9 +294,20 @@ class DataCollector(Node):
                 json.dump(data, f, indent=2)
                 
             self.get_logger().info(f"轨迹数据已保存: {trajectory_file}")
-            
+
         except Exception as e:
             self.get_logger().error(f"保存轨迹数据失败: {e}")
+
+    def force_save(self):
+        """强制保存当前收集到的轨迹数据（即使未处于 recording 状态）"""
+        try:
+            if self.current_bag_file and (self.ground_truth_poses or self.estimated_poses):
+                self._save_trajectory_data()
+                self.get_logger().info("强制保存轨迹数据完成")
+            else:
+                self.get_logger().info("没有足够的数据可保存")
+        except Exception as e:
+            self.get_logger().error(f"force_save 失败: {e}")
     
     def get_collected_data(self) -> dict:
         """获取收集到的数据"""

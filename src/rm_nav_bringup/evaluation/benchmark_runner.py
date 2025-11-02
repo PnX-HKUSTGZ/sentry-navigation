@@ -10,6 +10,10 @@ import time
 import subprocess
 import threading
 import signal
+import argparse
+import random
+import csv
+import json
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 import rclpy
@@ -80,7 +84,7 @@ class BenchmarkRunner(Node):
             self.get_logger().error(f"加载配置文件失败: {e}")
             return {'test_scenarios': {}, 'test_methods': {}}
     
-    def run_benchmark_suite(self, methods: List[str], scenarios: Optional[List[str]] = None) -> Dict[str, Any]:
+    def run_benchmark_suite(self, methods: List[str], scenarios: Optional[List[str]] = None, repeats: int = 1, base_seed: Optional[int] = None) -> Dict[str, Any]:
         """运行完整的基准测试套件"""
         self.get_logger().info(f"开始运行基准测试套件")
         self.get_logger().info(f"测试方法: {methods}")
@@ -93,6 +97,8 @@ class BenchmarkRunner(Node):
         
         all_results = {}
         
+        summary_rows = []
+
         for method in methods:
             self.get_logger().info(f"======= 开始测试方法: {method} =======")
             method_results = {}
@@ -105,9 +111,54 @@ class BenchmarkRunner(Node):
                     
                 self.get_logger().info(f"  --- 测试场景: {scenario_name} ---")
                 
-                # 运行单个测试
-                result = self._run_single_test(method, scenario_name, scenario_config)
-                method_results[scenario_name] = result
+                # 支持重复运行
+                repeats_results = []
+                for rep in range(repeats):
+                    # 生成或派生随机种子
+                    if base_seed is not None:
+                        seed = int(base_seed) + rep
+                    else:
+                        seed = int(time.time()) + rep
+
+                    self.get_logger().info(f"  --- 运行 {scenario_name} (repeat {rep+1}/{repeats}) seed={seed} ---")
+                    result = self._run_single_test(method, scenario_name, scenario_config, repeat_index=rep+1, seed=seed)
+                    repeats_results.append(result)
+
+                    # 保存单次结果到文件
+                    try:
+                        out_dir = self.data_collector.output_dir
+                        out_dir.mkdir(exist_ok=True)
+                        result_file = out_dir / f"result_{method}_{scenario_name}_{int(time.time())}_rep{rep+1}.json"
+                        with open(result_file, 'w', encoding='utf-8') as rf:
+                            json.dump(result, rf, indent=2, ensure_ascii=False)
+                        self.get_logger().info(f"已保存结果: {result_file}")
+                    except Exception as e:
+                        self.get_logger().warning(f"保存单次结果失败: {e}")
+
+                    # 追加汇总行
+                    try:
+                        ate_rmse = result.get('trajectory_metrics', {}).get('ate', {}).get('rmse', 'N/A')
+                        rpe_rmse = result.get('trajectory_metrics', {}).get('rpe', {}).get('rmse', 'N/A')
+                        cpu_max = result.get('performance_metrics', {}).get('cpu', {}).get('max', 'N/A')
+                        mem_max = result.get('performance_metrics', {}).get('memory', {}).get('max', 'N/A') if result.get('performance_metrics') else 'N/A'
+                    except Exception:
+                        ate_rmse = rpe_rmse = cpu_max = mem_max = 'N/A'
+
+                    summary_rows.append({
+                        'method': method,
+                        'scenario': scenario_name,
+                        'repeat': rep+1,
+                        'seed': seed,
+                        'ate_rmse': ate_rmse,
+                        'rpe_rmse': rpe_rmse,
+                        'cpu_max': cpu_max,
+                        'mem_max': mem_max,
+                        'success': result.get('success', False),
+                        'bag_file': result.get('bag_file', ''),
+                        'timestamp': result.get('timestamp', time.time())
+                    })
+
+                method_results[scenario_name] = repeats_results
                 
                 # 测试间隔，让系统稳定
                 self.get_logger().info("等待系统稳定...")
@@ -120,10 +171,22 @@ class BenchmarkRunner(Node):
         self.get_logger().info("生成评估报告...")
         report_file = self.report_generator.generate_comparison_report(all_results)
         self.get_logger().info(f"评估报告已生成: {report_file}")
+
+        # 保存汇总 CSV
+        try:
+            csv_file = self.data_collector.output_dir / f"benchmark_summary_{int(time.time())}.csv"
+            with open(csv_file, 'w', newline='', encoding='utf-8') as cf:
+                writer = csv.DictWriter(cf, fieldnames=['method','scenario','repeat','seed','ate_rmse','rpe_rmse','cpu_max','mem_max','success','bag_file','timestamp'])
+                writer.writeheader()
+                for row in summary_rows:
+                    writer.writerow(row)
+            self.get_logger().info(f"汇总CSV已保存: {csv_file}")
+        except Exception as e:
+            self.get_logger().warning(f"保存汇总CSV失败: {e}")
         
         return all_results
     
-    def _run_single_test(self, method: str, scenario_name: str, scenario_config: Dict) -> Dict[str, Any]:
+    def _run_single_test(self, method: str, scenario_name: str, scenario_config: Dict, repeat_index: int = 1, seed: Optional[int] = None) -> Dict[str, Any]:
         """运行单个测试案例"""
         self.get_logger().info(f"开始测试: {method} - {scenario_name}")
         
@@ -165,7 +228,7 @@ class BenchmarkRunner(Node):
             
             # 8. 汇总结果
             test_duration = time.time() - self.test_start_time
-            
+
             result = {
                 'scenario': scenario_name,
                 'method': method,
@@ -174,7 +237,9 @@ class BenchmarkRunner(Node):
                 'test_duration': test_duration,
                 'bag_file': bag_file,
                 'timestamp': time.time(),
-                'success': success
+                'success': success,
+                'repeat': repeat_index,
+                'seed': seed
             }
             
             self.get_logger().info(f"测试完成: {method} - {scenario_name}")
@@ -428,9 +493,14 @@ class BenchmarkRunner(Node):
 def main():
     """主函数"""
     rclpy.init()
-    
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--repeats', type=int, default=1, help='每个场景的重复次数')
+    parser.add_argument('--seed', type=int, default=None, help='可选的基准种子（将与重复索引相加）')
+    args = parser.parse_args()
+
     runner = BenchmarkRunner()
-    
+
     try:
         # 定义要测试的方法
         test_methods = [
@@ -445,13 +515,13 @@ def main():
             'high_dynamic',
             'feature_sparse'
         ]
-        
+
         # 运行基准测试
         print("\n" + "="*50)
         print("🤖 哨兵导航系统基准测试")
         print("="*50)
-        
-        results = runner.run_benchmark_suite(test_methods, test_scenarios)
+
+        results = runner.run_benchmark_suite(test_methods, test_scenarios, repeats=args.repeats, base_seed=args.seed)
         
         print("\n" + "="*50)
         print("✅ 基准测试完成!")
