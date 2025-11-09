@@ -13,6 +13,10 @@ import tempfile
 import json
 import math
 import sys
+import os
+import time
+import signal
+import yaml
 
 class TrajectoryAnalyzer:
     """轨迹分析器"""
@@ -142,9 +146,186 @@ class TrajectoryAnalyzer:
     def _extract_from_rosbag(self, bag_file: str) -> Tuple[Optional[str], Optional[str]]:
         """从ROS bag文件提取轨迹数据"""
         try:
-            # 这里需要实现从rosbag读取的代码
-            # 由于rosbag2的Python API比较复杂，暂时返回None
-            print("从rosbag提取轨迹数据的功能尚未实现")
+            print(f"尝试从rosbag提取轨迹数据: {bag_file}")
+
+            # 确保 bag_file 指向已经记录的 ros2 bag 目录（或 .db3 文件所在目录）
+            # 我们使用 subprocess 调用 `ros2 bag play` 并同时用 `ros2 topic echo -p` 导出消息为 YAML，
+            # 之后解析 YAML 并构建 TUM 文件。
+
+            import yaml
+            import signal
+
+            tmp_gt = tempfile.NamedTemporaryFile(mode='w', suffix='_gt.tum', delete=False)
+            tmp_est = tempfile.NamedTemporaryFile(mode='w', suffix='_est.tum', delete=False)
+            tmp_gt.close()
+            tmp_est.close()
+
+            # 临时文件保存 topic echo 输出
+            tmp_gz = tempfile.NamedTemporaryFile(mode='w', suffix='_model_states.yaml', delete=False)
+            tmp_odom = tempfile.NamedTemporaryFile(mode='w', suffix='_odom.yaml', delete=False)
+            tmp_gz.close()
+            tmp_odom.close()
+
+            # 启动 ros2 bag play
+            play_cmd = ['ros2', 'bag', 'play', str(bag_file)]
+            play_proc = subprocess.Popen(play_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, preexec_fn=os.setsid)
+
+            # 启动 topic echo 进程，输出原始 YAML
+            gz_cmd = ['ros2', 'topic', 'echo', '-p', '/gazebo/model_states']
+            odom_cmd = ['ros2', 'topic', 'echo', '-p', '/odom']
+
+            gz_proc = subprocess.Popen(gz_cmd, stdout=open(tmp_gz.name, 'w'), stderr=subprocess.PIPE, preexec_fn=os.setsid)
+            odom_proc = subprocess.Popen(odom_cmd, stdout=open(tmp_odom.name, 'w'), stderr=subprocess.PIPE, preexec_fn=os.setsid)
+
+            # 等待 play 进程结束（注意：对于大型 bag 这可能比较久）
+            try:
+                out, err = play_proc.communicate(timeout=3600)
+            except subprocess.TimeoutExpired:
+                # 超时则终止 play
+                os.killpg(os.getpgid(play_proc.pid), signal.SIGTERM)
+                play_proc.wait()
+
+            # play 结束后，停止 echo 订阅器
+            try:
+                if gz_proc.poll() is None:
+                    os.killpg(os.getpgid(gz_proc.pid), signal.SIGINT)
+            except Exception:
+                pass
+            try:
+                if odom_proc.poll() is None:
+                    os.killpg(os.getpgid(odom_proc.pid), signal.SIGINT)
+            except Exception:
+                pass
+
+            # 小等待让输出文件写完
+            time.sleep(1.0)
+
+            # 解析 model_states YAML 文件
+            gt_count = 0
+            est_count = 0
+            try:
+                with open(tmp_gz.name, 'r', encoding='utf-8') as f:
+                    # ros2 topic echo -p 会输出多段 YAML/JSON 风格的记录，逐个解析
+                    docs = list(yaml.safe_load_all(f))
+                    for doc in docs:
+                        if not doc:
+                            continue
+                        # doc 结构可能为 {'name': [...], 'pose': [...] , ...}
+                        names = doc.get('name') or doc.get('model_name') or []
+                        poses = doc.get('pose') or doc.get('poses') or []
+                        if not names or not poses:
+                            continue
+                        # 找到机器人索引
+                        robot_names = ['robot', 'sentry', 'sentry_robot']
+                        robot_index = None
+                        for rn in robot_names:
+                            if rn in names:
+                                robot_index = names.index(rn)
+                                break
+                        if robot_index is None and len(names) > 0:
+                            # fallback: assume first
+                            robot_index = 0
+
+                        try:
+                            pose = poses[robot_index]
+                        except Exception:
+                            continue
+
+                        # 提取时间戳（如果 doc 包含 header）
+                        stamp = None
+                        header = doc.get('header')
+                        if header and header.get('stamp'):
+                            s = header['stamp']
+                            sec = s.get('sec') or s.get('secs') or 0
+                            nsec = s.get('nanosec') or s.get('nsecs') or s.get('nsec') or 0
+                            stamp = float(sec) + float(nsec) * 1e-9
+
+                        if stamp is None:
+                            # fallback: use current time
+                            stamp = time.time()
+
+                        # pose 里可能是 pose: {position: {x,y,z}, orientation: {x,y,z,w}}
+                        pos = pose.get('position', {}) if isinstance(pose, dict) else {}
+                        ori = pose.get('orientation', {}) if isinstance(pose, dict) else {}
+
+                        x = pos.get('x', 0)
+                        y = pos.get('y', 0)
+                        z = pos.get('z', 0)
+                        qx = ori.get('x', 0)
+                        qy = ori.get('y', 0)
+                        qz = ori.get('z', 0)
+                        qw = ori.get('w', 1)
+
+                        with open(tmp_gt.name, 'a', encoding='utf-8') as gf:
+                            gf.write(f"{stamp} {x} {y} {z} {qx} {qy} {qz} {qw}\n")
+                            gt_count += 1
+            except Exception as e:
+                print(f"解析 model_states 失败: {e}")
+
+            # 解析 odom YAML 文件
+            try:
+                with open(tmp_odom.name, 'r', encoding='utf-8') as f:
+                    docs = list(yaml.safe_load_all(f))
+                    for doc in docs:
+                        if not doc:
+                            continue
+                        # doc 结构通常包含 header and pose
+                        header = doc.get('header') or {}
+                        stamp = None
+                        if header.get('stamp'):
+                            s = header['stamp']
+                            sec = s.get('sec') or s.get('secs') or 0
+                            nsec = s.get('nanosec') or s.get('nsecs') or s.get('nsec') or 0
+                            stamp = float(sec) + float(nsec) * 1e-9
+                        if stamp is None:
+                            stamp = time.time()
+
+                        pose = doc.get('pose', {}).get('pose') if doc.get('pose') else doc.get('pose')
+                        if not pose:
+                            # some outputs may directly expose position/orientation
+                            pose = doc.get('pose', {})
+
+                        pos = {}
+                        ori = {}
+                        if isinstance(pose, dict):
+                            position = pose.get('position') or {}
+                            orientation = pose.get('orientation') or {}
+                            pos = position
+                            ori = orientation
+
+                        x = pos.get('x', 0)
+                        y = pos.get('y', 0)
+                        z = pos.get('z', 0)
+                        qx = ori.get('x', 0)
+                        qy = ori.get('y', 0)
+                        qz = ori.get('z', 0)
+                        qw = ori.get('w', 1)
+
+                        with open(tmp_est.name, 'a', encoding='utf-8') as ef:
+                            ef.write(f"{stamp} {x} {y} {z} {qx} {qy} {qz} {qw}\n")
+                            est_count += 1
+            except Exception as e:
+                print(f"解析 odom 失败: {e}")
+
+            # 清理中间 YAML 文件
+            try:
+                Path(tmp_gz.name).unlink(missing_ok=True)
+                Path(tmp_odom.name).unlink(missing_ok=True)
+            except Exception:
+                pass
+
+            if gt_count == 0 and est_count == 0:
+                print("从rosbag中未提取到轨迹数据")
+                # 清理生成的 tum
+                Path(tmp_gt.name).unlink(missing_ok=True)
+                Path(tmp_est.name).unlink(missing_ok=True)
+                return None, None
+
+            print(f"从rosbag提取完成: GT={gt_count}, EST={est_count}")
+            return tmp_gt.name, tmp_est.name
+
+        except Exception as e:
+            print(f"从rosbag提取轨迹数据失败: {e}")
             return None, None
             
         except Exception as e:
