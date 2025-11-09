@@ -18,6 +18,7 @@ class WorldType:
     RMUC_24 = 'RMUC_24'
     RMUL_24 = 'RMUL_24'
     RMUC_25 = 'RMUC_25'
+    RMUC_26 = 'RMUC_26'
 
 def get_world_config(world_type):
     world_configs = {
@@ -42,6 +43,15 @@ def get_world_config(world_type):
             'z': '0.2',
             'yaw': '1.57079632679',
             'world_path': 'RMUC2025_world/RMUC2025_world.world'
+        }
+        ,
+        WorldType.RMUC_26: {
+            # Default spawn pose for RMUC_26; adjust if you have a preferred spawn point.
+            'x': '0.0',
+            'y': '0.0',
+            'z': '0.2',
+            'yaw': '0.0',
+            'world_path': 'RMUC2026_world/RMUC2026_world.world'
         }
     }
     return world_configs.get(world_type, None)
@@ -155,6 +165,7 @@ def generate_launch_description():
     bringup_RMUC_24_cmd_group = create_gazebo_launch_group(WorldType.RMUC_24)
     bringup_RMUL_24_cmd_group = create_gazebo_launch_group(WorldType.RMUL_24)
     bringup_RMUC_25_cmd_group = create_gazebo_launch_group(WorldType.RMUC_25)
+    bringup_RMUC_26_cmd_group = create_gazebo_launch_group(WorldType.RMUC_26)
 
     # Create the launch description and populate
     ld = LaunchDescription()
@@ -172,6 +183,7 @@ def generate_launch_description():
     ld.add_action(bringup_RMUL_24_cmd_group) # type: ignore
     ld.add_action(bringup_RMUC_24_cmd_group) # type: ignore
     ld.add_action(bringup_RMUC_25_cmd_group) # type: ignore
+    ld.add_action(bringup_RMUC_26_cmd_group) # type: ignore
 
     # Uncomment this line if you want to start RViz
     ld.add_action(start_rviz_cmd)

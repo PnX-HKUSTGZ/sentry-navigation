@@ -14,4 +14,8 @@ mat_pre.txt
 mat_out.txt
 imu.txt
 dbg.txt
+
+# Ignore very large user/converted STL files for RMUC2026 (keep local copy)
+/src/rm_simulation/pb_rm_simulation/meshes/RMUC2026_wolrd/UTF-8__RMUC2026.stl
+/src/rm_simulation/pb_rm_simulation/meshes/RMUC2026_world/meshes/RMUC_2026.stl
 pos_log.txt
