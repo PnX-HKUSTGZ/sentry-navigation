@@ -113,6 +113,7 @@ pointlio_mid360_params = os.path.join(
 pointlio_rviz_cfg_dir = os.path.join(rm_nav_bringup_dir, "rviz", "pointlio.rviz")
 
 # ================================ slam_toolbox parameters ================================
+# 统一管理地图/点云路径，防止分散配置导致的冲突
 slam_toolbox_map_dir = os.path.join(rm_nav_bringup_dir, "map", world)
 slam_toolbox_localization_file_dir = os.path.join(
     config_dir, "mapper_params_localization.yaml"
@@ -130,6 +131,16 @@ icp_pcd_dir = os.path.join(rm_nav_bringup_dir, "PCD", world + ".pcd")
 icp_registration_params_dir = os.path.join(
     config_dir, "icp_registration.yaml"
 )
+
+# 路径存在性检查（用于容错与提示）
+icp_map_exists = os.path.exists(icp_pcd_dir)
+nav2_map_exists = os.path.exists(nav2_map_dir)
+slam_map_exists = os.path.exists(slam_toolbox_map_dir) or os.path.exists(slam_toolbox_map_dir + ".posegraph")
+
+if localization == "icp" and not icp_map_exists:
+    print(f"[警告] 选择了 ICP 定位，但未找到 PCD 地图: {icp_pcd_dir}，将跳过 ICP 节点启动，仅启动 map_server（如有）。")
+if (localization in ["amcl", "slam_toolbox"] or mode == "nav") and not nav2_map_exists:
+    print(f"[警告] 未找到 Nav2 地图 YAML: {nav2_map_dir}，Map Server 可能启动失败。")
 # =================================== 点云处理节点定义 =========================================
 
 # 地面分割节点 - 使用线性拟合算法从点云中分离地面和障碍物
@@ -164,7 +175,7 @@ start_imu_complementary_filter = IncludeLaunchDescription(
 fast_lio_node = Node(
     package="fast_lio",
     executable="fastlio_mapping",
-    parameters=[fastlio_mid360_params, {use_sim_time: use_sim_time}],
+    parameters=[fastlio_mid360_params, {use_sim_time: use_sim_time, "map_file_path": icp_pcd_dir}],
     output="screen",
 )
 
@@ -174,7 +185,7 @@ point_lio_node = Node(
     executable="pointlio_mapping",
     name="laserMapping",
     output="screen",
-    parameters=[pointlio_mid360_params, {"use_sim_time": use_sim_time}],
+    parameters=[pointlio_mid360_params, {"use_sim_time": use_sim_time, "map_file_path": icp_pcd_dir}],
 )
 
 # =================================== 定位算法节点定义 =======================================
@@ -206,17 +217,19 @@ start_amcl = IncludeLaunchDescription(
 )
 
 # ICP定位节点 - 基于迭代最近点算法的点云配准定位
-icp_node = Node(
-    package="icp_registration",
-    executable="icp_registration_node",
-    output="screen",
-    parameters=[
-        icp_registration_params_dir,
-        {"use_sim_time": use_sim_time, "pcd_path": icp_pcd_dir},  # 点云地图路径
-    ],
-    # 可选的调试日志级别
-    # arguments=['--ros-args', '--log-level', ['icp_registration:=', 'DEBUG']]
-)
+icp_node = None
+if icp_map_exists:
+    icp_node = Node(
+        package="icp_registration",
+        executable="icp_registration_node",
+        output="screen",
+        parameters=[
+            icp_registration_params_dir,
+            {"use_sim_time": use_sim_time, "pcd_path": icp_pcd_dir},  # 点云地图路径
+        ],
+        # 可选的调试日志级别
+        # arguments=['--ros-args', '--log-level', ['icp_registration:=', 'DEBUG']]
+    )
 
 # 地图服务器启动 - 提供预构建的占用栅格地图
 start_map_server = IncludeLaunchDescription(

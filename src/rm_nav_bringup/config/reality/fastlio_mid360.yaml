@@ -6,8 +6,10 @@
         filter_size_surf: 0.5
         filter_size_map: 0.5
         cube_side_length: 1000.0
-        runtime_pos_log_enable: false
-        map_file_path: "src/rm_nav_bringup/PCD/YOUR_MAP_NAME.pcd"
+    runtime_pos_log_enable: false
+    # 地图文件路径由 rm_nav_bringup/launch/common.py 按 world 统一下发
+    # 如需单独运行本节点可手动填写，否则留空
+    map_file_path: ""
 
         common:
             lid_topic:  "/livox/lidar"

@@ -15,3 +15,4 @@ mat_out.txt
 imu.txt
 dbg.txt
 pos_log.txt
+src/rm_simulation/pb_rm_simulation/meshes/**
