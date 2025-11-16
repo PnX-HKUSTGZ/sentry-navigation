@@ -61,6 +61,36 @@ if use_sim:
 else:
     config_dir = os.path.join(rm_nav_bringup_dir, "config", "reality")
 
+# =========================== world index summary (friendly print) ========================
+def _compute_world_index():
+    import glob
+    maps_dir = os.path.join(rm_nav_bringup_dir, "map")
+    pcd_dir = os.path.join(rm_nav_bringup_dir, "PCD")
+    YAMLs = set([os.path.splitext(os.path.basename(p))[0] for p in glob.glob(os.path.join(maps_dir, "*.yaml"))])
+    PCDs = set([os.path.splitext(os.path.basename(p))[0] for p in glob.glob(os.path.join(pcd_dir, "*.pcd"))])
+    worlds = sorted(YAMLs | PCDs)
+    summary = {}
+    for w in worlds:
+        ypath = os.path.join(maps_dir, f"{w}.yaml")
+        ppath = os.path.join(pcd_dir, f"{w}.pcd")
+        yexists = os.path.exists(ypath)
+        pexists = os.path.exists(ppath)
+        status = "ok" if (yexists and pexists) else ("missing-pcd" if (yexists and not pexists) else ("missing-yaml" if (pexists and not yexists) else "missing-both"))
+        summary[w] = {
+            "yaml": ypath,
+            "yaml_exists": yexists,
+            "pcd": ppath,
+            "pcd_exists": pexists,
+            "status": status,
+        }
+    return summary
+
+world_index = _compute_world_index()
+print("可用地图清单摘要 (world -> yaml/pcd):")
+for w, info in world_index.items():
+    mark = "*" if w == world else " "
+    print(f" {mark} {w:12s} | yaml: {'Y' if info['yaml_exists'] else '-'} | pcd: {'Y' if info['pcd_exists'] else '-'} | {info['status']}")
+
 # =========================== robot description parameters ================================
 # 使用xacro生成机器人URDF描述，导入雷达坐标系参数
 if use_sim:

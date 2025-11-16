@@ -1,0 +1,31 @@
+worlds:
+  RMUC_24:
+    yaml: "src/rm_nav_bringup/map/RMUC_24.yaml"
+    yaml_exists: true
+    pcd: "src/rm_nav_bringup/PCD/RMUC_24.pcd"
+    pcd_exists: false
+    status: "missing-pcd"
+  RMUC_25:
+    yaml: "src/rm_nav_bringup/map/RMUC_25.yaml"
+    yaml_exists: true
+    pcd: "src/rm_nav_bringup/PCD/RMUC_25.pcd"
+    pcd_exists: false
+    status: "missing-pcd"
+  RMUL_24:
+    yaml: "src/rm_nav_bringup/map/RMUL_24.yaml"
+    yaml_exists: true
+    pcd: "src/rm_nav_bringup/PCD/RMUL_24.pcd"
+    pcd_exists: false
+    status: "missing-pcd"
+  RMUC:
+    yaml: "src/rm_nav_bringup/map/RMUC.yaml"
+    yaml_exists: false
+    pcd: "src/rm_nav_bringup/PCD/RMUC.pcd"
+    pcd_exists: true
+    status: "missing-yaml"
+  RMUL:
+    yaml: "src/rm_nav_bringup/map/RMUL.yaml"
+    yaml_exists: false
+    pcd: "src/rm_nav_bringup/PCD/RMUL.pcd"
+    pcd_exists: true
+    status: "missing-yaml"
