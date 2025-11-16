@@ -31,6 +31,7 @@ def generate_launch_description():
         localization,
         use_sim,
         use_lio_rviz,
+        icp_map_exists,
         fastlio_rviz_cfg_dir,
         pointlio_rviz_cfg_dir,
         # 节点定义
@@ -110,9 +111,13 @@ def generate_launch_description():
 
         elif localization == "icp":
             # ICP定位需要延迟启动，等待LIO稳定
-            print("   ICP定位将在7秒后启动...")
-            icp_timer = TimerAction(period=7.0, actions=[icp_node, start_map_server])
-            ld.add_action(icp_timer)
+            if icp_map_exists and icp_node is not None:
+                print("   ICP定位将在7秒后启动...")
+                icp_timer = TimerAction(period=7.0, actions=[icp_node, start_map_server])
+                ld.add_action(icp_timer)
+            else:
+                print("   未找到ICP所需的PCD地图，跳过ICP，仅启动Map Server（如可用）...")
+                ld.add_action(start_map_server)
 
     # 5. 辅助节点
     print("5. 启动辅助节点...")

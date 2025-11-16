@@ -3,7 +3,9 @@
     use_sim_time: false 
     rough_leaf_size: 0.4
     refine_leaf_size: 0.1
-    pcd_path: "/home/zcf/Downloads/RMUL.pcd"
+    # 注意：pcd 路径由 rm_nav_bringup/launch/common.py 基于 launch_params.yaml 的 world 字段统一下发
+    # 若单独运行本包的 icp.launch.py，可在这里手动填写 pcd 路径，默认留空
+    pcd_path: ""
     map_frame_id: "map"
     odom_frame_id: "odom"
     laser_frame_id: "livox_frame"
