@@ -136,6 +136,20 @@ small_gicp_pcd_dir = os.path.join(rm_nav_bringup_dir, "PCD", world + ".pcd")
 small_gicp_registration_params_dir = os.path.join(
     config_dir, "small_gicp_registration.yaml"
 )
+
+# =============================== 地图存在性检查（容错机制） ===================================
+icp_map_exists = os.path.exists(icp_pcd_dir)
+nav2_map_exists = os.path.exists(nav2_map_dir)
+slam_map_exists = os.path.exists(slam_toolbox_map_dir) or os.path.exists(slam_toolbox_map_dir + ".posegraph")
+small_gicp_map_exists = os.path.exists(small_gicp_pcd_dir)
+
+if localization == "icp" and not icp_map_exists:
+    print(f"[警告] 选择了 ICP 定位，但未找到 PCD 地图: {icp_pcd_dir}，将跳过 ICP 节点启动，仅启动 map_server（如有）。")
+if localization == "small_gicp" and not small_gicp_map_exists:
+    print(f"[警告] 选择了 Small-GICP 定位，但未找到 PCD 地图: {small_gicp_pcd_dir}，将跳过 Small-GICP 节点启动，仅启动 map_server（如有）。")
+if (localization in ["amcl", "slam_toolbox"] or mode == "nav") and not nav2_map_exists:
+    print(f"[警告] 未找到 Nav2 地图 YAML: {nav2_map_dir}，Map Server 可能启动失败。")
+
 # =================================== 点云处理节点定义 =========================================
 
 # 地面分割节点 - 使用线性拟合算法从点云中分离地面和障碍物
@@ -212,30 +226,34 @@ start_amcl = IncludeLaunchDescription(
 )
 
 # ICP定位节点 - 基于迭代最近点算法的点云配准定位
-icp_node = Node(
-    package="icp_registration",
-    executable="icp_registration_node",
-    output="screen",
-    parameters=[
-        icp_registration_params_dir,
-        {"use_sim_time": use_sim_time, "pcd_path": icp_pcd_dir},  # 点云地图路径
-    ],
-    # 可选的调试日志级别
-    # arguments=['--ros-args', '--log-level', ['icp_registration:=', 'DEBUG']]
-)
+icp_node = None
+if icp_map_exists:
+    icp_node = Node(
+        package="icp_registration",
+        executable="icp_registration_node",
+        output="screen",
+        parameters=[
+            icp_registration_params_dir,
+            {"use_sim_time": use_sim_time, "pcd_path": icp_pcd_dir},  # 点云地图路径
+        ],
+        # 可选的调试日志级别
+        # arguments=['--ros-args', '--log-level', ['icp_registration:=', 'DEBUG']]
+    )
 
 # Small GICP定位节点 - 基于高性能小型GICP算法的点云配准定位
-small_gicp_node = Node(
-    package="small_gicp_registration",
-    executable="small_gicp_registration_node",
-    output="screen",
-    parameters=[
-        small_gicp_registration_params_dir,
-        {"use_sim_time": use_sim_time, "pcd_path": small_gicp_pcd_dir},  # 点云地图路径
-    ],
-    # 可选的调试日志级别
-    # arguments=['--ros-args', '--log-level', ['small_gicp_registration:=', 'DEBUG']]
-)
+small_gicp_node = None
+if small_gicp_map_exists:
+    small_gicp_node = Node(
+        package="small_gicp_registration",
+        executable="small_gicp_registration_node",
+        output="screen",
+        parameters=[
+            small_gicp_registration_params_dir,
+            {"use_sim_time": use_sim_time, "pcd_path": small_gicp_pcd_dir},  # 点云地图路径
+        ],
+        # 可选的调试日志级别
+        # arguments=['--ros-args', '--log-level', ['small_gicp_registration:=', 'DEBUG']]
+    )
 
 # 地图服务器启动 - 提供预构建的占用栅格地图
 start_map_server = IncludeLaunchDescription(
