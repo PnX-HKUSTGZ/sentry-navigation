@@ -29,3 +29,10 @@ worlds:
     pcd: "src/rm_nav_bringup/PCD/RMUL_24.pcd"
     pcd_exists: false
     status: "missing-pcd"
+  RMUC26:
+    yaml: "src/rm_nav_bringup/map/RMUC26.yaml"
+    yaml_exists: true
+    pcd: "src/rm_nav_bringup/PCD/RMUC26.pcd"
+    pcd_exists: true
+    status: "complete"
+
