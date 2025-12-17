@@ -2,7 +2,7 @@
 
 import os
 
-from ament_index_python.packages import get_package_share_directory
+from ament_index_python.packages import get_package_share_directory, get_package_prefix
 
 from launch import LaunchDescription
 from launch.substitutions import LaunchConfiguration, Command
@@ -67,13 +67,31 @@ def generate_launch_description():
 
     # Create the launch configuration variables
     use_sim_time = LaunchConfiguration('use_sim_time')
+    use_gui = LaunchConfiguration('gui', default='false')
     use_rviz = LaunchConfiguration('rviz', default='false')
     robot_description = LaunchConfiguration('robot_description')
 
-    # Set Gazebo plugin path
-    append_enviroment = AppendEnvironmentVariable(
+    # Ensure Gazebo can discover all required plugins:
+    # - gazebo_ros sensor plugins (e.g., libgazebo_ros_imu_sensor.so)
+    # - Livox simulation plugin (libros2_livox.so)
+    # - Obstacle plugins shipped with this simulation package
+    gazebo_ros_plugin_path = AppendEnvironmentVariable(
         'GAZEBO_PLUGIN_PATH',
-        os.path.join(os.path.join(get_package_share_directory('pb_rm_simulation'), 'meshes', 'obstacles', 'obstacle_plugin', 'lib'))
+        os.path.join(get_package_prefix('gazebo_ros'), 'lib')
+    )
+    livox_sim_plugin_path = AppendEnvironmentVariable(
+        'GAZEBO_PLUGIN_PATH',
+        os.path.join(get_package_prefix('ros2_livox_simulation'), 'lib')
+    )
+    obstacle_plugin_path = AppendEnvironmentVariable(
+        'GAZEBO_PLUGIN_PATH',
+        os.path.join(
+            get_package_share_directory('pb_rm_simulation'),
+            'meshes',
+            'obstacles',
+            'obstacle_plugin',
+            'lib',
+        )
     )
 
     declare_use_sim_time_cmd = DeclareLaunchArgument(
@@ -86,6 +104,12 @@ def generate_launch_description():
         'world',
         default_value=WorldType.RMUC_24,
         description='Choose <RMUC_24> or <RMUL_24> or <RMUC_25>'
+    )
+
+    declare_gui_cmd = DeclareLaunchArgument(
+        'gui',
+        default_value='false',
+        description='Whether to launch Gazebo GUI (gzclient). Set false for headless evaluation.'
     )
 
     declare_rviz_config_file_cmd = DeclareLaunchArgument(
@@ -103,6 +127,7 @@ def generate_launch_description():
     # Specify the actions
     gazebo_client_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(pkg_gazebo_ros, 'launch', 'gzclient.launch.py')),
+        condition=IfCondition(use_gui),
     )
 
     start_joint_state_publisher_cmd = Node(
@@ -171,10 +196,13 @@ def generate_launch_description():
     ld = LaunchDescription()
 
     # Set environment variables
-    ld.add_action(append_enviroment)
+    ld.add_action(gazebo_ros_plugin_path)
+    ld.add_action(livox_sim_plugin_path)
+    ld.add_action(obstacle_plugin_path)
 
     ld.add_action(declare_use_sim_time_cmd)
     ld.add_action(declare_world_cmd)
+    ld.add_action(declare_gui_cmd)
     ld.add_action(declare_rviz_config_file_cmd)
     ld.add_action(declare_robot_description_cmd)
     ld.add_action(gazebo_client_launch)

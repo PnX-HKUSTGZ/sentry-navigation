@@ -42,6 +42,7 @@
     <gazebo reference="${name}">
       <sensor type="ray" name="${name}">
         <pose>0 0 0 0 0 0</pose>
+        <always_on>true</always_on>
         <visualize>true</visualize>
         <update_rate>10</update_rate>
         <plugin name="${name}_plugin" filename="libros2_livox.so">

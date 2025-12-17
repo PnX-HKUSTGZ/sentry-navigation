@@ -102,7 +102,7 @@ namespace gazebo
       gazebo_ros::Node::SharedPtr node_;
       rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr cloud2_pub;
       rclcpp::Publisher<livox_ros_driver2::msg::CustomMsg>::SharedPtr custom_pub;
-      
+
       std::string parent_name;
       std::string child_name;
       int64_t samplesStep = 0;

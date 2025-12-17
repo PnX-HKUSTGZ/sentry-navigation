@@ -124,6 +124,20 @@ namespace gazebo
             end_point = maxDist * axis + offset.Pos();
             rayShape->AddRay(start_point, end_point);
         }
+
+        // Make sure the underlying RaySensor is active.
+        // Without this, some setups may create publishers but never trigger scan updates.
+        auto ray_sensor_ptr = std::dynamic_pointer_cast<gazebo::sensors::RaySensor>(_parent);
+        if (ray_sensor_ptr)
+        {
+            ray_sensor_ptr->SetActive(true);
+            RCLCPP_INFO(rclcpp::get_logger("LivoxPointsPlugin"), "RaySensor activated");
+        }
+        else
+        {
+            RCLCPP_WARN(rclcpp::get_logger("LivoxPointsPlugin"),
+                        "Failed to cast parent sensor to RaySensor; laser scans callback may not run");
+        }
     }
 
 
