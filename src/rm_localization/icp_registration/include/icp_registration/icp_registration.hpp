@@ -83,6 +83,10 @@ private:
   double yaw_resolution_;
   geometry_msgs::msg::Pose initial_pose_;
 
+  // Cache /initialpose if it arrives before the first scan.
+  geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr pending_initialpose_;
+  bool has_pending_initialpose_{false};
+
   bool is_ready_;
   bool first_scan_;
 };

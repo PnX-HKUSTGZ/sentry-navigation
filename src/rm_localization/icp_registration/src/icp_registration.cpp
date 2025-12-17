@@ -94,14 +94,15 @@ IcpNode::IcpNode(const rclcpp::NodeOptions &options)
       "pointcloud_topic", std::string("/livox/lidar/pointcloud"));
   RCLCPP_INFO(this->get_logger(), "pointcloud_topic: %s",
               pointcloud_topic.c_str());
-  auto qos = rclcpp::QoS(rclcpp::KeepLast(10));
+  auto sensor_qos = rclcpp::SensorDataQoS();
   pointcloud_sub_ = create_subscription<sensor_msgs::msg::PointCloud2>(
-      pointcloud_topic, qos,
+      pointcloud_topic, sensor_qos,
       std::bind(&IcpNode::pointcloudCallback, this, std::placeholders::_1));
   // Set up the initial pose subscriber
   initial_pose_sub_ =
       create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
-          "/initialpose", qos,
+          "/initialpose",
+          rclcpp::QoS(rclcpp::KeepLast(1)).reliable().durability_volatile(),
           [this](geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg) {
             initialPoseCallback(msg);
           });
@@ -158,17 +159,36 @@ void IcpNode::pointcloudCallback(
     const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
   pcl::fromROSMsg(*msg, *cloud_in_);
   if (first_scan_) {
-    auto pose_msg =
-        std::make_shared<geometry_msgs::msg::PoseWithCovarianceStamped>();
-    pose_msg->header = msg->header;
-    pose_msg->pose.pose = initial_pose_;
-    initialPoseCallback(pose_msg);
+    // Prefer an externally provided /initialpose if it arrived before the first scan.
+    if (has_pending_initialpose_ && pending_initialpose_) {
+      RCLCPP_INFO(this->get_logger(),
+                  "Applying cached /initialpose on first scan");
+      initialPoseCallback(pending_initialpose_);
+      pending_initialpose_.reset();
+      has_pending_initialpose_ = false;
+    } else {
+      auto pose_msg =
+          std::make_shared<geometry_msgs::msg::PoseWithCovarianceStamped>();
+      pose_msg->header = msg->header;
+      pose_msg->pose.pose = initial_pose_;
+      initialPoseCallback(pose_msg);
+    }
     first_scan_ = false;
   }
 }
 
 void IcpNode::initialPoseCallback(
     const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg) {
+
+  // /initialpose 可能早于点云到达（尤其在仿真/延迟启动时），
+  // 这会导致 ICP 使用空点云并永久失败，进而不发布 map->odom。
+  if (!cloud_in_ || cloud_in_->empty()) {
+    pending_initialpose_ = msg;
+    has_pending_initialpose_ = true;
+    RCLCPP_WARN(this->get_logger(),
+                "Received /initialpose but pointcloud is empty; caching until first scan arrives");
+    return;
+  }
 
   // Set the initial pose
   Eigen::Vector3d pos(msg->pose.pose.position.x, msg->pose.pose.position.y,
@@ -195,7 +215,7 @@ void IcpNode::initialPoseCallback(
   try {
     // Get odom to laser transform
     auto transform =
-        tf_buffer_->lookupTransform(laser_frame_id_, range_odom_frame_id_, now(),
+        tf_buffer_->lookupTransform(laser_frame_id_, range_odom_frame_id_, rclcpp::Time(0),
                                     rclcpp::Duration::from_seconds(10));
     // RCLCPP_INFO(get_logger(), "%s", transform.header.frame_id.c_str());
     Eigen::Vector3d t(transform.transform.translation.x,

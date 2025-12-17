@@ -1,6 +1,6 @@
 /icp_registration:
   ros__parameters:
-    use_sim_time: false 
+    use_sim_time: true
     rough_leaf_size: 0.4
     refine_leaf_size: 0.1
     pcd_path: ""
