@@ -65,7 +65,7 @@ def main():
     
     try:
         # 创建基准测试运行器
-        runner = BenchmarkRunner()
+        runner = BenchmarkRunner(output_dir=args.output_dir)
         
         if args.single_test:
             # 运行单个测试用于调试

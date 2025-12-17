@@ -17,8 +17,8 @@ from datetime import datetime
 class ReportGenerator:
     """报告生成器"""
     
-    def __init__(self):
-        self.output_dir = Path.home() / 'sentry_evaluation_results'
+    def __init__(self, output_dir: str | None = None):
+        self.output_dir = Path(output_dir) if output_dir else (Path.home() / 'sentry_evaluation_results')
         self.output_dir.mkdir(exist_ok=True)
         
     def generate_comparison_report(self, all_results: Dict[str, Any]) -> str:

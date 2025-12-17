@@ -124,18 +124,19 @@ echo -e "${YELLOW}🚀 开始评估...${NC}"
 echo "测试方法: ${METHODS[*]}"
 echo "测试场景: ${SCENARIOS[*]}"
 
-# 构建Python命令
-PYTHON_CMD="python3 src/rm_nav_bringup/scripts/simple_test.py"
+# 构建Python命令（真实评估入口：会启动系统、发送导航目标、录包并生成报告）
+PYTHON_CMD="python3 src/rm_nav_bringup/scripts/run_benchmark.py"
 PYTHON_CMD="$PYTHON_CMD --methods ${METHODS[*]}"
 PYTHON_CMD="$PYTHON_CMD --scenarios ${SCENARIOS[*]}"
 PYTHON_CMD="$PYTHON_CMD --output-dir $RESULTS_DIR"
 
 if [ "$SINGLE_TEST" = true ]; then
     # 单个测试模式，只测试第一个方法和场景
-    PYTHON_CMD="python3 src/rm_nav_bringup/scripts/simple_test.py"
+    PYTHON_CMD="python3 src/rm_nav_bringup/scripts/run_benchmark.py"
     PYTHON_CMD="$PYTHON_CMD --methods ${METHODS[0]}"
     PYTHON_CMD="$PYTHON_CMD --scenarios ${SCENARIOS[0]}"
     PYTHON_CMD="$PYTHON_CMD --output-dir $RESULTS_DIR"
+    PYTHON_CMD="$PYTHON_CMD --single-test"
     echo -e "${YELLOW}🔍 运行单个测试 (调试模式)${NC}"
 fi
 

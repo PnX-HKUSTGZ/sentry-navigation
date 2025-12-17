@@ -14,12 +14,15 @@ import argparse
 import random
 import csv
 import json
+import math
+import psutil
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 import rclpy
 from rclpy.node import Node
+from rclpy.duration import Duration
 from geometry_msgs.msg import PoseStamped, Twist, PoseWithCovarianceStamped
-from nav_msgs.msg import Odometry, Path
+from nav_msgs.msg import Odometry, Path as NavPath
 from sensor_msgs.msg import PointCloud2
 from std_msgs.msg import Header
 from nav2_msgs.action import NavigateToPose
@@ -33,19 +36,34 @@ from report_generator import ReportGenerator
 
 class BenchmarkRunner(Node):
     """基准测试运行器"""
-    
-    def __init__(self):
+
+    def __init__(self, output_dir: Optional[str] = None):
         super().__init__('benchmark_runner')
         self.get_logger().info("初始化基准测试运行器...")
+
+        # 评估输出目录（报告/汇总/日志/数据包）
+        # 约定：output_dir 下同时包含报告文件与 sentry_evaluation_data 子目录
+        if output_dir:
+            self.output_dir = Path(output_dir)
+        else:
+            self.output_dir = Path.home() / 'sentry_evaluation_results'
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.data_dir = self.output_dir / 'sentry_evaluation_data'
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.logs_dir = self.output_dir / 'logs'
+        self.logs_dir.mkdir(parents=True, exist_ok=True)
         
         # 加载配置
         self.config = self._load_config()
         
         # 初始化各个模块
-        self.data_collector = DataCollector()
+        self.data_collector = DataCollector(output_dir=str(self.data_dir))
         self.performance_monitor = PerformanceMonitor()
         self.trajectory_analyzer = TrajectoryAnalyzer()
-        self.report_generator = ReportGenerator()
+        self.report_generator = ReportGenerator(output_dir=str(self.output_dir))
+
+        # 记录启动进程的日志句柄，便于清理
+        self._launch_log_handle = None
         
         # 测试状态
         self.current_test = None
@@ -65,6 +83,16 @@ class BenchmarkRunner(Node):
         
         # Nav2 Action Client
         self.nav_action_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
+
+        # TF（用于等待定位初始化完成）
+        self._tf_buffer = None
+        self._tf_listener = None
+        try:
+            import tf2_ros
+            self._tf_buffer = tf2_ros.Buffer(cache_time=Duration(seconds=10.0))
+            self._tf_listener = tf2_ros.TransformListener(self._tf_buffer, self)
+        except Exception as e:
+            self.get_logger().warning(f"TF2 初始化失败，部分等待逻辑将跳过: {e}")
         
         # 导航状态监控
         self.navigation_goal_reached = False
@@ -73,6 +101,14 @@ class BenchmarkRunner(Node):
         
         # 配置文件路径
         self.launch_params_file = Path('/home/nyz/sentry/sentry-navigation/src/rm_nav_bringup/config/launch_params.yaml')
+
+        # 当前测试所使用的定位模式（由 _update_launch_params 写入）
+        self._current_localization: Optional[str] = None
+
+        # 内存看门狗：避免长测把机器拖到 OOM
+        self._abort_requested = threading.Event()
+        self._mem_watchdog_thread: Optional[threading.Thread] = None
+        self._current_bringup_process: Optional[subprocess.Popen] = None
         
     def _load_config(self):
         """加载测试配置"""
@@ -191,14 +227,19 @@ class BenchmarkRunner(Node):
         self.get_logger().info(f"开始测试: {method} - {scenario_name}")
         
         # 1. 启动对应的导航系统
-        process = self._launch_navigation_system(method, scenario_config)
+        process = self._launch_navigation_system(method, scenario_name, scenario_config)
+        self._current_bringup_process = process
+        self._abort_requested.clear()
         
         if not process:
             return {'error': '启动导航系统失败'}
         
-        # 等待系统启动
+        # 等待系统启动并确保 Nav2 Action Server 可用
         self.get_logger().info("等待导航系统启动...")
-        time.sleep(15)
+        time.sleep(5)
+        if not self._wait_for_nav2_ready(timeout_sec=scenario_config.get('startup_timeout', 120)):
+            self.get_logger().error("Nav2 Action Server 在超时内未就绪，终止本次测试")
+            return {'error': 'Nav2 Action服务器不可用/未就绪'}
         
         try:
             # 2. 开始数据收集
@@ -209,6 +250,9 @@ class BenchmarkRunner(Node):
             
             # 3. 开始性能监控
             self.performance_monitor.start_monitoring()
+
+            # 3.1 启动内存看门狗（尽早终止并清理，避免机器被 OOM 重启）
+            self._start_memory_watchdog()
             
             # 4. 执行测试场景
             self.test_start_time = time.time()
@@ -256,33 +300,189 @@ class BenchmarkRunner(Node):
         finally:
             # 清理：关闭导航系统
             self._cleanup_navigation_system(process)
+            self._stop_memory_watchdog()
+            self._current_bringup_process = None
     
-    def _launch_navigation_system(self, method: str, scenario_config: Dict) -> Optional[subprocess.Popen]:
+    def _launch_navigation_system(self, method: str, scenario_name: str, scenario_config: Dict) -> Optional[subprocess.Popen]:
         """启动对应的导航系统"""
         try:
+            # Gazebo Classic 默认使用 11345 端口作为 master。
+            # 若上一轮未清理干净，会导致新 gzserver 启动直接 exit code 255（bind: Address already in use）。
+            # 这里先做一次“尽量温和”的清理，避免评估链路被端口占用卡死。
+            self._cleanup_stale_sim_processes()
+
+            # 若仍有进程占用 Gazebo master 端口，直接失败（避免后续长时间等待）
+            try:
+                import socket
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.settimeout(0.2)
+                    if s.connect_ex(('127.0.0.1', 11345)) == 0:
+                        self.get_logger().error(
+                            "检测到 Gazebo master 端口 11345 仍被占用（可能有遗留 gzserver 或其它 Gazebo 实例）。"
+                        )
+                        self.get_logger().error(
+                            "请先关闭占用 11345 的进程，或结束其它 Gazebo 会话后再运行评估。"
+                        )
+                        return None
+            except Exception:
+                # 端口探测失败不阻断流程
+                pass
+
             # 修改launch_params.yaml以使用指定方法
             self._update_launch_params(method, scenario_config)
             
             # 构建启动命令
             cmd = [
                 'bash', '-c', 
-                'cd /home/nyz/sentry/sentry-navigation && source install/setup.bash && ros2 launch rm_nav_bringup bringup.launch.py'
+                # 评估默认关闭 RViz，避免 rviz 退出触发全局 Shutdown 级联
+                'cd /home/nyz/sentry/sentry-navigation && source install/setup.bash && ros2 launch rm_nav_bringup bringup.launch.py nav_rviz:=false'
             ]
             
-            # 启动导航系统
+            # 启动导航系统：输出落盘，避免 PIPE 写满导致启动进程卡死
+            ts = int(time.time())
+            log_file = self.logs_dir / f"bringup_{method}_{scenario_name}_{ts}.log"
+            self._launch_log_handle = open(log_file, 'wb')
+
             process = subprocess.Popen(
                 cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stdout=self._launch_log_handle,
+                stderr=subprocess.STDOUT,
                 preexec_fn=os.setsid  # 创建新的进程组
             )
             
             self.get_logger().info(f"导航系统启动中... PID: {process.pid}")
+            self.get_logger().info(f"导航系统日志: {log_file}")
             return process
             
         except Exception as e:
             self.get_logger().error(f"启动导航系统失败: {e}")
             return None
+
+    def _cleanup_stale_sim_processes(self):
+        """清理遗留的评估相关进程。
+
+        目标：避免上一轮评估遗留的进程占用端口/资源，导致本轮 Nav2 action server 不就绪或仿真失败。
+
+        注意：仅清理命令行与本工程强相关的进程，避免误杀用户其它会话。
+        """
+
+        def _matches_target(name: str, cmdline: str) -> bool:
+            if not name and not cmdline:
+                return False
+
+            is_bringup_launch = (
+                'ros2 launch rm_nav_bringup bringup.launch.py' in cmdline
+                or ('rm_nav_bringup' in cmdline and 'bringup.launch.py' in cmdline)
+            )
+
+            is_nav2_container = (
+                'component_container_mt' in name
+                and ('__node:=nav2_container' in cmdline or ' __node:=nav2_container' in cmdline)
+            )
+
+            is_gazebo = (
+                'gzserver' in name
+                or 'gzclient' in name
+                or cmdline.startswith('gzserver ')
+                or cmdline.startswith('gzclient ')
+                or ' gzserver ' in cmdline
+                or ' gzclient ' in cmdline
+            )
+
+            is_spawn_entity = 'spawn_entity.py' in cmdline and 'gazebo_ros' in cmdline
+
+            if not (is_bringup_launch or is_nav2_container or is_gazebo or is_spawn_entity):
+                return False
+
+            # bringup / nav2_container 视为评估“独占资源”，直接清理（同用户下）。
+            # 这是为了解决评估过程中断/异常后 nav2_container 脱离进程组、长期残留的问题。
+            if is_bringup_launch or is_nav2_container:
+                return True
+
+            # 仅清理与本工程相关的实例
+            return (
+                ('/sentry-navigation/' in cmdline)
+                or ('/pb_rm_simulation/' in cmdline)
+                or ('pb_rm_simulation' in cmdline)
+                or ('rm_nav_bringup' in cmdline)
+                or ('src/rm_nav_bringup' in cmdline)
+            )
+
+        try:
+            current_username = psutil.Process().username()
+        except Exception:
+            current_username = None
+
+        targets: List[psutil.Process] = []
+        for proc in psutil.process_iter(['pid', 'name', 'cmdline', 'username']):
+            try:
+                if current_username is not None and proc.info.get('username') != current_username:
+                    continue
+
+                name = (proc.info.get('name') or '').lower()
+                cmdline_list = proc.info.get('cmdline') or []
+                cmdline = ' '.join(cmdline_list)
+                if _matches_target(name, cmdline):
+                    targets.append(psutil.Process(proc.info['pid']))
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+
+        if not targets:
+            return
+
+        self.get_logger().warning(
+            f"检测到遗留评估进程 {len(targets)} 个，尝试清理以释放端口/资源（Gazebo/Nav2/bringup）"
+        )
+
+        # 先 SIGINT
+        for p in targets:
+            try:
+                p.send_signal(signal.SIGINT)
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+
+        gone, alive = psutil.wait_procs(targets, timeout=3.0)
+        if alive:
+            # 再 SIGKILL
+            for p in alive:
+                try:
+                    p.kill()
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+            psutil.wait_procs(alive, timeout=2.0)
+
+    def _wait_for_nav2_ready(self, timeout_sec: float = 120.0) -> bool:
+        """等待 Nav2 NavigateToPose action server 就绪"""
+        start = time.time()
+        last_log = 0.0
+        while (time.time() - start) < float(timeout_sec):
+            # 若 bringup 已经退出，就没必要继续等
+            try:
+                proc = self._current_bringup_process
+                if proc is not None and proc.poll() is not None:
+                    self.get_logger().error(
+                        f"导航系统进程已提前退出（rc={proc.returncode}），Nav2 Action Server 不会就绪。"
+                    )
+                    return False
+            except Exception:
+                pass
+
+            # 进程事件/发现可能需要 spin
+            try:
+                rclpy.spin_once(self, timeout_sec=0.1)
+            except Exception:
+                pass
+
+            if self.nav_action_client.wait_for_server(timeout_sec=1.0):
+                self.get_logger().info("Nav2 Action Server 已就绪: navigate_to_pose")
+                return True
+
+            elapsed = time.time() - start
+            if elapsed - last_log >= 5.0:
+                self.get_logger().info(f"等待 Nav2 Action Server 就绪... {elapsed:.0f}s/{float(timeout_sec):.0f}s")
+                last_log = elapsed
+
+        return False
     
     def _update_launch_params(self, method: str, scenario_config: Dict):
         """更新启动参数以使用指定的方法"""
@@ -299,6 +499,8 @@ class BenchmarkRunner(Node):
                 params['lio'] = method_config['lio']
             if 'localization' in method_config:
                 params['localization'] = method_config['localization']
+
+            self._current_localization = params.get('localization')
             
             # 设置测试环境
             params['mode'] = 'nav'
@@ -317,19 +519,36 @@ class BenchmarkRunner(Node):
     def _execute_scenario(self, scenario_config: Dict) -> bool:
         """执行测试场景"""
         try:
+            if self._abort_requested.is_set():
+                return False
+
             waypoints = scenario_config.get('waypoints', [])
             initial_pose = scenario_config.get('initial_pose', [0, 0, 0, 0, 0, 0])
             
             # 设置初始位置
-            self._set_initial_pose(initial_pose)
+            # 评估默认不再调用 /gazebo/set_entity_state（该服务易阻塞/超时，并可能导致资源堆积）。
+            # 依赖仿真 spawn_entity 的默认出生点 + /initialpose 来完成定位初始化。
+            if os.environ.get('SENTRY_EVAL_SET_GAZEBO_POSE', '0') == '1':
+                self._set_initial_pose(initial_pose)
             time.sleep(2)
             
-            # 设置初始位姿估计
-            self._set_initial_pose_estimate(initial_pose)
-            time.sleep(3)
+            # 设置初始位姿估计：对 ICP/Small-GICP 等延迟启动节点，采用持续发布方式提升命中率
+            # ICP/Small-GICP 通常需要初始位姿触发配准并开始发布 map->odom
+            loc = (self._current_localization or '').lower()
+            if loc in ('icp', 'small_gicp'):
+                self._publish_initial_pose_for_localization(initial_pose, publish_sec=10.0, publish_hz=2.0)
+                if not self._wait_for_transform('map', 'odom', timeout_sec=20.0):
+                    self.get_logger().error('定位 TF 未就绪（map <- odom 超时），终止本次测试以避免 goal 被拒绝')
+                    return False
+            else:
+                self._publish_initial_pose_for_localization(initial_pose)
+            time.sleep(1)
             
             # 逐个导航到各个航点
             for i, waypoint in enumerate(waypoints):
+                if self._abort_requested.is_set():
+                    self.get_logger().error('触发内存看门狗：终止测试')
+                    return False
                 self.current_waypoint_index = i
                 self.get_logger().info(f"导航到航点 {i+1}/{len(waypoints)}: {waypoint}")
                 
@@ -352,11 +571,33 @@ class BenchmarkRunner(Node):
         """在仿真中设置机器人初始位姿"""
         try:
             if len(pose) >= 6:
+                yaw = float(pose[5])
+                qz = math.sin(yaw / 2.0)
+                qw = math.cos(yaw / 2.0)
+                request = {
+                    'state': {
+                        'name': 'robot',
+                        'pose': {
+                            'position': {
+                                'x': float(pose[0]),
+                                'y': float(pose[1]),
+                                'z': float(pose[2]),
+                            },
+                            'orientation': {
+                                'x': 0.0,
+                                'y': 0.0,
+                                'z': float(qz),
+                                'w': float(qw),
+                            },
+                        },
+                    }
+                }
+                request_yaml = yaml.safe_dump(request, default_flow_style=True).strip()
                 # 使用Gazebo服务设置机器人位置
                 cmd = [
                     'ros2', 'service', 'call', '/gazebo/set_entity_state',
                     'gazebo_msgs/srv/SetEntityState',
-                    f'{{state: {{name: "robot", pose: {{position: {{x: {pose[0]}, y: {pose[1]}, z: {pose[2]}}}, orientation: {{x: 0, y: 0, z: {pose[5]}, w: 1}}}}}}}}'
+                    request_yaml
                 ]
                 
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
@@ -368,41 +609,86 @@ class BenchmarkRunner(Node):
         except Exception as e:
             self.get_logger().error(f"设置初始位姿失败: {e}")
     
-    def _set_initial_pose_estimate(self, pose: List[float]):
-        """设置初始位姿估计"""
+    def _publish_initial_pose_for_localization(self, pose: List[float], publish_sec: float = 6.0, publish_hz: float = 2.0):
+        """发布 /initialpose 以初始化定位（尤其是 ICP/Small-GICP）。
+
+        说明：ICP/Small-GICP 节点在 bringup 中会延迟启动（TimerAction 7s）。
+        为提高命中率，这里在一段时间内重复发布，并更新 stamp。
+        """
         try:
             if len(pose) >= 6:
-                initial_pose = PoseWithCovarianceStamped()
-                initial_pose.header.frame_id = 'map'
-                initial_pose.header.stamp = self.get_clock().now().to_msg()
-                
-                initial_pose.pose.pose.position.x = float(pose[0])
-                initial_pose.pose.pose.position.y = float(pose[1])
-                initial_pose.pose.pose.position.z = float(pose[2])
-                
-                # 简单的yaw角度转四元数
-                import math
-                yaw = pose[5]
-                initial_pose.pose.pose.orientation.z = math.sin(yaw / 2.0)
-                initial_pose.pose.pose.orientation.w = math.cos(yaw / 2.0)
-                
-                # 设置协方差矩阵
-                initial_pose.pose.covariance = [0.25, 0.0, 0.0, 0.0, 0.0, 0.0,
-                                              0.0, 0.25, 0.0, 0.0, 0.0, 0.0,
-                                              0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-                                              0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-                                              0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-                                              0.0, 0.0, 0.0, 0.0, 0.0, 0.06853892326654787]
-                
-                self.initial_pose_publisher.publish(initial_pose)
-                self.get_logger().info("初始位姿估计已发布")
+                publish_hz = max(0.5, float(publish_hz))
+                publish_sec = max(0.5, float(publish_sec))
+                count = int(publish_sec * publish_hz)
+
+                yaw = float(pose[5])
+                qz = math.sin(yaw / 2.0)
+                qw = math.cos(yaw / 2.0)
+
+                cov = [0.25, 0.0, 0.0, 0.0, 0.0, 0.0,
+                       0.0, 0.25, 0.0, 0.0, 0.0, 0.0,
+                       0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                       0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                       0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                       0.0, 0.0, 0.0, 0.0, 0.0, 0.06853892326654787]
+
+                loc = (self._current_localization or '').lower()
+                self.get_logger().info(
+                    f"发布 /initialpose 用于定位初始化 (localization={loc or 'unknown'})，持续 {publish_sec:.1f}s @ {publish_hz:.1f}Hz"
+                )
+
+                for _ in range(count):
+                    msg = PoseWithCovarianceStamped()
+                    msg.header.frame_id = 'map'
+                    msg.header.stamp = self.get_clock().now().to_msg()
+                    msg.pose.pose.position.x = float(pose[0])
+                    msg.pose.pose.position.y = float(pose[1])
+                    msg.pose.pose.position.z = float(pose[2])
+                    msg.pose.pose.orientation.z = float(qz)
+                    msg.pose.pose.orientation.w = float(qw)
+                    msg.pose.covariance = cov
+                    self.initial_pose_publisher.publish(msg)
+                    rclpy.spin_once(self, timeout_sec=0.05)
+                    time.sleep(1.0 / publish_hz)
+
+                # ICP/Small-GICP 常见需要一点时间完成首帧配准并开始发布 map->odom
+                if loc in ('icp', 'small_gicp'):
+                    time.sleep(2.0)
                 
         except Exception as e:
             self.get_logger().error(f"设置初始位姿估计失败: {e}")
+
+    def _wait_for_transform(self, target_frame: str, source_frame: str, timeout_sec: float = 10.0) -> bool:
+        """等待 TF 变换可用（用于判断定位是否开始工作）。"""
+        if self._tf_buffer is None:
+            return False
+
+        start = time.time()
+        last_log = 0.0
+        while (time.time() - start) < float(timeout_sec):
+            try:
+                rclpy.spin_once(self, timeout_sec=0.1)
+                if self._tf_buffer.can_transform(
+                    target_frame, source_frame, rclpy.time.Time(), timeout=Duration(seconds=0.2)
+                ):
+                    self.get_logger().info(f"TF 已就绪: {target_frame} <- {source_frame}")
+                    return True
+            except Exception:
+                pass
+
+            elapsed = time.time() - start
+            if elapsed - last_log >= 2.0:
+                self.get_logger().info(f"等待 TF: {target_frame} <- {source_frame} ... {elapsed:.0f}s/{float(timeout_sec):.0f}s")
+                last_log = elapsed
+
+        self.get_logger().warning(f"等待 TF 超时: {target_frame} <- {source_frame}")
+        return False
     
     def _navigate_to_waypoint(self, waypoint: List[float], timeout: float = 30.0) -> bool:
         """导航到指定航点"""
         try:
+            if self._abort_requested.is_set():
+                return False
             if len(waypoint) < 3:
                 return False
             
@@ -427,6 +713,8 @@ class BenchmarkRunner(Node):
             # 等待目标被接受
             start_time = time.time()
             while not future.done() and (time.time() - start_time) < 5.0:
+                if self._abort_requested.is_set():
+                    return False
                 rclpy.spin_once(self, timeout_sec=0.1)
             
             if not future.done():
@@ -443,6 +731,8 @@ class BenchmarkRunner(Node):
             start_time = time.time()
             
             while not result_future.done() and (time.time() - start_time) < timeout:
+                if self._abort_requested.is_set():
+                    return False
                 rclpy.spin_once(self, timeout_sec=0.1)
             
             if result_future.done():
@@ -462,6 +752,57 @@ class BenchmarkRunner(Node):
         except Exception as e:
             self.get_logger().error(f"导航失败: {e}")
             return False
+
+    def _start_memory_watchdog(self):
+        if self._mem_watchdog_thread and self._mem_watchdog_thread.is_alive():
+            return
+
+        def _watch():
+            # 阈值：可用内存 < 1GB 或内存占用 > 95% 就触发
+            min_available_gb = float(os.environ.get('SENTRY_EVAL_MIN_AVAILABLE_GB', '1.0'))
+            max_used_percent = float(os.environ.get('SENTRY_EVAL_MAX_MEM_PERCENT', '95.0'))
+            while rclpy.ok() and not self._abort_requested.is_set():
+                try:
+                    vm = psutil.virtual_memory()
+                    available_gb = vm.available / (1024**3)
+                    used_percent = float(vm.percent)
+                    if available_gb < min_available_gb or used_percent > max_used_percent:
+                        self.get_logger().error(
+                            f"内存告警：available={available_gb:.2f}GB, used={used_percent:.1f}% -> 触发保护终止"
+                        )
+                        self._abort_requested.set()
+
+                        # 尽可能快速释放：停止 rosbag + 关闭 bringup
+                        try:
+                            if self.data_collector and self.data_collector.bag_process:
+                                os.killpg(os.getpgid(self.data_collector.bag_process.pid), signal.SIGINT)
+                        except Exception:
+                            pass
+
+                        try:
+                            proc = self._current_bringup_process
+                            if proc and proc.poll() is None:
+                                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                        except Exception:
+                            pass
+                        return
+
+                except Exception:
+                    pass
+
+                time.sleep(1.0)
+
+        self._mem_watchdog_thread = threading.Thread(target=_watch, daemon=True)
+        self._mem_watchdog_thread.start()
+
+    def _stop_memory_watchdog(self):
+        # 线程是 daemon，靠 abort 标志退出；这里仅尽量触发退出并 join 一下。
+        self._abort_requested.set()
+        try:
+            if self._mem_watchdog_thread and self._mem_watchdog_thread.is_alive():
+                self._mem_watchdog_thread.join(timeout=1.0)
+        except Exception:
+            pass
     
     def _wait_for_test_completion(self, max_duration: float):
         """等待测试完成"""
@@ -486,6 +827,18 @@ class BenchmarkRunner(Node):
                     self.get_logger().warning("强制关闭导航系统")
                     os.killpg(os.getpgid(process.pid), signal.SIGKILL)
                     process.wait()
+
+            # 兜底清理：防止 Gazebo/SpawnEntity 因异常脱离 launch 进程组而残留
+            self._cleanup_stale_sim_processes()
+
+            # 关闭日志句柄
+            if self._launch_log_handle is not None:
+                try:
+                    self._launch_log_handle.flush()
+                    self._launch_log_handle.close()
+                except Exception:
+                    pass
+                self._launch_log_handle = None
                     
         except Exception as e:
             self.get_logger().error(f"清理导航系统失败: {e}")

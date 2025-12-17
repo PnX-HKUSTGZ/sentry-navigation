@@ -22,11 +22,14 @@ import json
 class DataCollector(Node):
     """数据收集器"""
     
-    def __init__(self):
+    def __init__(self, output_dir: Optional[str] = None):
         super().__init__('data_collector')
         
         # 数据存储路径
-        self.output_dir = Path.home() / 'sentry_evaluation_data'
+        if output_dir:
+            self.output_dir = Path(output_dir)
+        else:
+            self.output_dir = Path.home() / 'sentry_evaluation_data'
         self.output_dir.mkdir(exist_ok=True)
         
         # ROS bag 相关
@@ -74,31 +77,38 @@ class DataCollector(Node):
         self.get_logger().info(f"开始数据收集: {bag_name}")
         
         # 要记录的话题列表
+        # 默认只记录轻量话题，避免 rosbag2 缓存 + 大体量点云导致内存飙升（甚至触发 OOM 重启）。
         topics_to_record = [
             '/gazebo/model_states',     # 地面真值
             '/odom',                    # 里程计输出
             '/tf',                      # TF变换
             '/tf_static',               # 静态TF变换
-            '/livox/lidar',             # 点云数据
-            '/livox/imu',               # IMU数据
-            '/scan',                    # 激光扫描
-            '/map',                     # 地图
             '/goal_pose',               # 目标位姿
-            '/local_plan',              # 局部路径
-            '/global_plan',             # 全局路径
             '/cmd_vel',                 # 速度命令
-            '/joint_states',            # 关节状态
         ]
+
+        # 可选：重话题（点云/IMU/地图/scan 等）。需要时显式开启：SENTRY_EVAL_RECORD_HEAVY_TOPICS=1
+        if os.environ.get('SENTRY_EVAL_RECORD_HEAVY_TOPICS', '0') == '1':
+            topics_to_record += [
+                '/livox/lidar/pointcloud',
+                '/livox/imu',
+                '/scan',
+                '/map',
+                '/local_plan',
+                '/global_plan',
+                '/joint_states',
+            ]
         
-        # 构建ros2 bag record命令
+        # 构建 ros2 bag record 命令
+        # 注：不使用 PIPE，避免输出无人消费时导致阻塞/资源堆积。
         cmd = ['ros2', 'bag', 'record'] + topics_to_record + ['-o', str(bag_path)]
         
         try:
             # 启动录制进程
             self.bag_process = subprocess.Popen(
                 cmd, 
-                stdout=subprocess.PIPE, 
-                stderr=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
                 preexec_fn=os.setsid  # 创建新的进程组
             )
             self.current_bag_file = str(bag_path)

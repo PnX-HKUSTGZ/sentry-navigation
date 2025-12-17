@@ -13,6 +13,9 @@ cd /home/nyz/sentry/sentry-navigation
 ./run_evaluation.sh
 ```
 
+说明：`run_evaluation.sh` 会构建工作区，然后运行 `python3 src/rm_nav_bringup/scripts/run_benchmark.py`。
+该入口会启动导航系统、按场景 `waypoints` 自动发送 `NavigateToPose` 目标、录制数据并生成报告。
+
 ### 2. 自定义评估
 
 ```bash
@@ -41,6 +44,26 @@ python3 src/rm_nav_bringup/scripts/run_benchmark.py \
 python3 src/rm_nav_bringup/scripts/compare_methods.py \
     --results-dir ~/sentry_evaluation_results \
     --generate-charts
+```
+
+### 4. 调试建议（强烈推荐）
+
+1) 先跑单测（只跑一个方法+一个场景）：
+
+```bash
+./run_evaluation.sh --single-test
+```
+
+2) 如果提示 Action Server 不可用，先在另一终端检查：
+
+```bash
+ros2 action list | grep -i navigate
+```
+
+3) 启动日志默认落盘在结果目录下的 `logs/`：
+
+```text
+~/sentry_evaluation_results/logs/
 ```
 
 ## 📊 测试方法
@@ -82,7 +105,7 @@ python3 src/rm_nav_bringup/scripts/compare_methods.py \
 
 ## 📁 输出结果
 
-评估完成后，结果保存在 `~/sentry_evaluation_results/` 目录下：
+评估完成后，结果保存在 `~/sentry_evaluation_results/`（或你通过 `--output-dir` 指定的目录）下：
 
 ```
 sentry_evaluation_results/
@@ -92,6 +115,7 @@ sentry_evaluation_results/
 ├── cpu_comparison.png                         # CPU使用率对比图
 ├── memory_comparison.png                     # 内存使用对比图
 ├── performance_radar.png                     # 综合性能雷达图
+├── logs/                                     # bringup 与导航系统输出日志
 └── sentry_evaluation_data/                   # 原始数据包和轨迹数据
     ├── fastlio_slam_toolbox_basic_navigation_TIMESTAMP/
     ├── fastlio_slam_toolbox_basic_navigation_TIMESTAMP.json
