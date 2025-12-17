@@ -1,7 +1,8 @@
 /small_gicp_registration:
   ros__parameters:
     use_sim_time: true
-    pointcloud_topic: "/livox/lidar/pointcloud"
+    # Use LIO output in body frame (livox_frame) to ensure XYZ+intensity and non-empty data in simulation.
+    pointcloud_topic: "/cloud_registered_body"
     pcd_path: ""
     map_frame_id: "map"
     odom_frame_id: "odom"

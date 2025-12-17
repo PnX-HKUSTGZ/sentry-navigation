@@ -19,7 +19,7 @@ import os
 import sys
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import TimerAction
+from launch.actions import TimerAction, DeclareLaunchArgument
 from launch_ros.actions import Node
 sys.path.append(os.path.join(get_package_share_directory('rm_nav_bringup'), 'launch'))
 
@@ -54,6 +54,15 @@ def generate_launch_description():
         start_mapping_node,
     )
     ld = LaunchDescription()
+
+    # 允许在命令行覆盖：ros2 launch rm_nav_bringup bringup.launch.py nav_rviz:=false
+    ld.add_action(
+        DeclareLaunchArgument(
+            'nav_rviz',
+            default_value='true',
+            description='Whether to launch Navigation2 RViz (rm_navigation/rviz_launch.py)'
+        )
+    )
     
     # 1. 仿真环境
     if use_sim:

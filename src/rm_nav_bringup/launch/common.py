@@ -5,6 +5,7 @@ from ament_index_python.packages import get_package_share_directory
 from launch.substitutions import Command
 from launch.actions import IncludeLaunchDescription
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 
@@ -33,8 +34,15 @@ mode = launch_params.get("mode", "nav")  # 获取运行模式 (mapping/nav)，�
 lio = launch_params.get("lio", "fastlio")  # 激光雷达惯性里程计 (pointlio/fastlio)，默认为fastlio
 localization = launch_params.get("localization", "slam_toolbox")  # 获取定位模式 (amcl/slam_toolbox/icp)
 use_sim = launch_params.get("use_sim", False)  # 是否使用仿真，默认为False
-use_sim_time = LaunchConfiguration('use_sim_time', default=str(use_sim))  # 供ROS使用
+use_sim_time = LaunchConfiguration(
+    'use_sim_time',
+    default='true' if use_sim else 'false'
+)  # 供ROS使用（避免使用 'True'/'False' 造成类型/解析歧义）
+
+# 作为 Node 参数下发时强制为 bool，避免 /tf 与 /clock 时间基准不一致
+use_sim_time_param = ParameterValue(use_sim_time, value_type=bool)
 use_lio_rviz = launch_params.get("use_lio_rviz", False)  # 可视化 FAST_LIO 或 Point_LIO 的点云图
+nav_rviz = LaunchConfiguration('nav_rviz', default='true')  # Navigation2 RViz（可由 launch 参数覆盖）
 
 # 参数验证
 valid_modes = ["mapping", "nav"]
@@ -184,7 +192,7 @@ start_imu_complementary_filter = IncludeLaunchDescription(
 fast_lio_node = Node(
     package="fast_lio",
     executable="fastlio_mapping",
-    parameters=[fastlio_mid360_params, {use_sim_time: use_sim_time}],
+    parameters=[fastlio_mid360_params, {"use_sim_time": use_sim_time_param}],
     output="screen",
 )
 
@@ -194,7 +202,7 @@ point_lio_node = Node(
     executable="pointlio_mapping",
     name="laserMapping",
     output="screen",
-    parameters=[pointlio_mid360_params, {"use_sim_time": use_sim_time}],
+    parameters=[pointlio_mid360_params, {"use_sim_time": use_sim_time_param}],
 )
 
 # =================================== 定位算法节点定义 =======================================
@@ -207,7 +215,7 @@ slam_toolbox_node = Node(
     parameters=[
         slam_toolbox_localization_file_dir,
         {
-            "use_sim_time": use_sim_time,
+            "use_sim_time": use_sim_time_param,
             "map_file_name": slam_toolbox_map_dir,  # 预加载的地图文件
             "map_start_pose": [0.0, 0.0, 0.0],  # 地图起始位姿
         },
@@ -234,7 +242,7 @@ if icp_map_exists:
         output="screen",
         parameters=[
             icp_registration_params_dir,
-            {"use_sim_time": use_sim_time, "pcd_path": icp_pcd_dir},  # 点云地图路径
+            {"use_sim_time": use_sim_time_param, "pcd_path": icp_pcd_dir},  # 点云地图路径
         ],
         # 可选的调试日志级别
         # arguments=['--ros-args', '--log-level', ['icp_registration:=', 'DEBUG']]
@@ -249,7 +257,7 @@ if small_gicp_map_exists:
         output="screen",
         parameters=[
             small_gicp_registration_params_dir,
-            {"use_sim_time": use_sim_time, "pcd_path": small_gicp_pcd_dir},  # 点云地图路径
+            {"use_sim_time": use_sim_time_param, "pcd_path": small_gicp_pcd_dir},  # 点云地图路径
         ],
         # 可选的调试日志级别
         # arguments=['--ros-args', '--log-level', ['small_gicp_registration:=', 'DEBUG']]
@@ -274,7 +282,7 @@ bringup_fake_vel_transform_node = Node(
     executable='fake_vel_transform_node',
     output='screen',
     parameters=[{
-        'use_sim_time': use_sim_time,
+        'use_sim_time': use_sim_time_param,
         'spin_speed': 0.0  # 旋转速度 (rad/s)
     }]
 )
@@ -286,7 +294,7 @@ start_mapping_node = Node(
     name='slam_toolbox',
     parameters=[
         slam_toolbox_mapping_file_dir,
-        {'use_sim_time': use_sim_time}
+        {'use_sim_time': use_sim_time_param}
     ],
 )
 
@@ -297,7 +305,7 @@ start_navigation2 = IncludeLaunchDescription(
         'use_sim_time': use_sim_time,
         'map': nav2_map_dir,
         'params_file': nav2_params_file_dir,
-        'nav_rviz': 'true'}.items()
+    'nav_rviz': nav_rviz}.items()
 )
 
 # 里程计坐标系变换 - 建立odom和lidar_odom之间的等价静态坐标变换
@@ -331,6 +339,7 @@ if use_sim:
             "world": world,
             "robot_description": robot_description_sim,
             "rviz": "False",  # 关闭仿真包自带的RViz
+            "gui": "false",   # 关闭 Gazebo GUI（gzclient），避免评估时内存飙升
         }.items(),
     )
     
