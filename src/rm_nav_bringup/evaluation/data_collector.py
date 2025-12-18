@@ -41,6 +41,9 @@ class DataCollector(Node):
         self.estimated_poses = []
         self.recording = False
         
+        # 轨迹数据上限保护 (防止长测试内存溢出)
+        self.MAX_POSES = int(os.environ.get('SENTRY_EVAL_MAX_POSES', '10000'))
+        
         # 订阅器
         self.model_states_sub = None
         self.odom_sub = None
@@ -101,7 +104,17 @@ class DataCollector(Node):
         
         # 构建 ros2 bag record 命令
         # 注：不使用 PIPE，避免输出无人消费时导致阻塞/资源堆积。
-        cmd = ['ros2', 'bag', 'record'] + topics_to_record + ['-o', str(bag_path)]
+        # RosBag 安全配置：限制大小 + 启用压缩 (防止磁盘写满)
+        max_bag_size = os.environ.get('SENTRY_EVAL_MAX_BAG_SIZE', '500000000')  # 500MB 默认
+        compression_mode = os.environ.get('SENTRY_EVAL_BAG_COMPRESSION', 'file')
+        
+        cmd = ['ros2', 'bag', 'record'] + topics_to_record + [
+            '-o', str(bag_path),
+            '-b', max_bag_size,                     # 限制单个 bag 文件大小
+            '--compression-mode', compression_mode,  # 文件压缩模式
+            '--compression-format', 'zstd',         # zstd 压缩算法
+            '--max-cache-size', '1048576'           # 限制缓存 1MB
+        ]
         
         try:
             # 启动录制进程
@@ -236,6 +249,9 @@ class DataCollector(Node):
                     }
                 }
 
+                # 限制列表大小 (FIFO) 防止内存无限增长
+                if len(self.ground_truth_poses) >= self.MAX_POSES:
+                    self.ground_truth_poses.pop(0)
                 self.ground_truth_poses.append(pose_data)
                 
         except Exception as e:
@@ -272,6 +288,9 @@ class DataCollector(Node):
                 }
             }
             
+            # 限制列表大小 (FIFO) 防止内存无限增长
+            if len(self.estimated_poses) >= self.MAX_POSES:
+                self.estimated_poses.pop(0)
             self.estimated_poses.append(pose_data)
             
         except Exception as e:

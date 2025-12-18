@@ -25,6 +25,9 @@ class PerformanceMonitor:
         self.node_processes = {}
         self.system_info = self._get_system_info()
         
+        # 监控数据上限保护 (防止长时间运行内存堆积)
+        self.MAX_SAMPLES = int(os.environ.get('SENTRY_EVAL_MAX_SAMPLES', '1000'))
+        
     def _get_system_info(self) -> Dict[str, Any]:
         """获取系统信息"""
         try:
@@ -133,7 +136,9 @@ class PerformanceMonitor:
                     except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                         node_stats[node_name] = None
                 
-                # 记录系统级数据
+                # 记录系统级数据 (限制列表大小防止内存堆积)
+                if len(self.cpu_data) >= self.MAX_SAMPLES:
+                    self.cpu_data.pop(0)
                 self.cpu_data.append({
                     'timestamp': timestamp,
                     'total_cpu': cpu_percent,
@@ -141,6 +146,8 @@ class PerformanceMonitor:
                     'nodes': {k: v['cpu_percent'] if v else 0 for k, v in node_stats.items()}
                 })
                 
+                if len(self.memory_data) >= self.MAX_SAMPLES:
+                    self.memory_data.pop(0)
                 self.memory_data.append({
                     'timestamp': timestamp,
                     'total_memory_percent': memory_info.percent,
@@ -152,6 +159,8 @@ class PerformanceMonitor:
                 # 监控网络延迟和话题频率
                 latency_info = self._measure_topic_metrics()
                 if latency_info:
+                    if len(self.latency_data) >= self.MAX_SAMPLES:
+                        self.latency_data.pop(0)
                     self.latency_data.append({
                         'timestamp': timestamp,
                         **latency_info
