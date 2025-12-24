@@ -46,9 +46,72 @@ class DataCollector(Node):
         
         # 订阅器
         self.model_states_sub = None
+        self.gt_odom_sub = None
         self.odom_sub = None
+
+        # 动态解析的 topic 名称（不同仿真/bringup 可能会 remap）
+        self.model_states_topic: Optional[str] = None
+        self.ground_truth_odom_topic: Optional[str] = None
+        self.odom_topic: Optional[str] = None
         
         self.get_logger().info("数据收集器初始化完成")
+
+    def _resolve_topic_by_type(self, preferred: str, type_name: str) -> Optional[str]:
+        """在当前 ROS graph 中解析 topic。
+
+        优先返回 preferred（若存在且类型匹配）；否则返回第一个匹配 type_name 的 topic。
+        """
+        try:
+            topics = list(self.get_topic_names_and_types())
+        except Exception:
+            topics = []
+
+        # 1) preferred
+        for name, types in topics:
+            if name == preferred and type_name in (types or []):
+                return name
+
+        # 2) fallback by type
+        for name, types in topics:
+            if type_name in (types or []):
+                return name
+
+        return None
+
+    def _wait_and_resolve_topics(self, timeout_sec: float = 20.0):
+        """等待关键 topic 出现并解析其名称。"""
+        deadline = time.time() + float(timeout_sec)
+        resolved_ms = None
+        resolved_gt_odom = None
+        resolved_odom = None
+
+        while time.time() < deadline:
+            resolved_ms = self._resolve_topic_by_type('/gazebo/model_states', 'gazebo_msgs/msg/ModelStates')
+            resolved_gt_odom = self._resolve_topic_by_type('/ground_truth/odom', 'nav_msgs/msg/Odometry')
+            resolved_odom = self._resolve_topic_by_type('/odom', 'nav_msgs/msg/Odometry')
+
+            # 若任一存在则可提前结束（另一个可能本来就不存在）
+            if resolved_ms or resolved_gt_odom or resolved_odom:
+                break
+
+            time.sleep(0.2)
+
+        self.model_states_topic = resolved_ms
+        self.ground_truth_odom_topic = resolved_gt_odom
+        self.odom_topic = resolved_odom
+
+        if self.model_states_topic:
+            self.get_logger().info(f"已解析 GT topic: {self.model_states_topic}")
+        else:
+            self.get_logger().warning("未找到 gazebo ModelStates topic（将导致 ATE/RPE 无法计算）")
+
+        if self.ground_truth_odom_topic:
+            self.get_logger().info(f"已解析 GT Odom topic: {self.ground_truth_odom_topic}")
+
+        if self.odom_topic:
+            self.get_logger().info(f"已解析 Odom topic: {self.odom_topic}")
+        else:
+            self.get_logger().warning("未找到 Odometry topic（将导致 ATE/RPE 无法计算）")
 
     def _ros_time_to_sec(self, stamp) -> float:
         """将 ROS 时间转换为秒（支持不同字段命名）"""
@@ -79,16 +142,25 @@ class DataCollector(Node):
         
         self.get_logger().info(f"开始数据收集: {bag_name}")
         
+        # 尝试解析 topic（不同 bringup 可能 remap /gazebo/model_states 或 /odom）
+        topic_wait = float(os.environ.get('SENTRY_EVAL_TOPIC_WAIT_SEC', '20'))
+        self._wait_and_resolve_topics(timeout_sec=topic_wait)
+
         # 要记录的话题列表
         # 默认只记录轻量话题，避免 rosbag2 缓存 + 大体量点云导致内存飙升（甚至触发 OOM 重启）。
         topics_to_record = [
-            '/gazebo/model_states',     # 地面真值
-            '/odom',                    # 里程计输出
             '/tf',                      # TF变换
             '/tf_static',               # 静态TF变换
             '/goal_pose',               # 目标位姿
             '/cmd_vel',                 # 速度命令
         ]
+
+        if self.model_states_topic:
+            topics_to_record.insert(0, self.model_states_topic)  # GT
+        if self.ground_truth_odom_topic:
+            topics_to_record.insert(0, self.ground_truth_odom_topic)  # GT Odom
+        if self.odom_topic:
+            topics_to_record.insert(0, self.odom_topic)          # EST
 
         # 可选：重话题（点云/IMU/地图/scan 等）。需要时显式开启：SENTRY_EVAL_RECORD_HEAVY_TOPICS=1
         if os.environ.get('SENTRY_EVAL_RECORD_HEAVY_TOPICS', '0') == '1':
@@ -178,15 +250,30 @@ class DataCollector(Node):
     
     def _start_ros_subscribers(self):
         """启动ROS订阅器"""
-        self.model_states_sub = self.create_subscription(
-            ModelStates, '/gazebo/model_states', 
-            self.model_states_callback, 10
-        )
-        
-        self.odom_sub = self.create_subscription(
-            Odometry, '/odom',
-            self.odom_callback, 10
-        )
+        # 如果 start_recording 前还没解析到，这里再尝试一次（不阻塞太久）
+        if self.model_states_topic is None and self.ground_truth_odom_topic is None and self.odom_topic is None:
+            try:
+                self._wait_and_resolve_topics(timeout_sec=2.0)
+            except Exception:
+                pass
+
+        if self.model_states_topic:
+            self.model_states_sub = self.create_subscription(
+                ModelStates, self.model_states_topic,
+                self.model_states_callback, 10
+            )
+
+        if self.ground_truth_odom_topic:
+            self.gt_odom_sub = self.create_subscription(
+                Odometry, self.ground_truth_odom_topic,
+                self.gt_odom_callback, 10
+            )
+
+        if self.odom_topic:
+            self.odom_sub = self.create_subscription(
+                Odometry, self.odom_topic,
+                self.odom_callback, 10
+            )
         
         self.get_logger().info("ROS订阅器已启动")
     
@@ -195,6 +282,10 @@ class DataCollector(Node):
         if self.model_states_sub:
             self.destroy_subscription(self.model_states_sub)
             self.model_states_sub = None
+
+        if self.gt_odom_sub:
+            self.destroy_subscription(self.gt_odom_sub)
+            self.gt_odom_sub = None
             
         if self.odom_sub:
             self.destroy_subscription(self.odom_sub)
@@ -295,6 +386,42 @@ class DataCollector(Node):
             
         except Exception as e:
             self.get_logger().debug(f"获取估计位姿时发生错误: {e}")
+
+    def gt_odom_callback(self, msg: Odometry):
+        """地面真值里程计回调 - 获取地面真值位姿"""
+        if not self.recording:
+            return
+
+        try:
+            try:
+                header = getattr(msg, 'header', None)
+                if header is not None:
+                    timestamp = self._ros_time_to_sec(header.stamp)
+                else:
+                    timestamp = self.get_clock().now().nanoseconds / 1e9
+            except Exception:
+                timestamp = self.get_clock().now().nanoseconds / 1e9
+
+            pose_data = {
+                'timestamp': float(timestamp),
+                'position': {
+                    'x': msg.pose.pose.position.x,
+                    'y': msg.pose.pose.position.y,
+                    'z': msg.pose.pose.position.z
+                },
+                'orientation': {
+                    'x': msg.pose.pose.orientation.x,
+                    'y': msg.pose.pose.orientation.y,
+                    'z': msg.pose.pose.orientation.z,
+                    'w': msg.pose.pose.orientation.w
+                }
+            }
+
+            if len(self.ground_truth_poses) >= self.MAX_POSES:
+                self.ground_truth_poses.pop(0)
+            self.ground_truth_poses.append(pose_data)
+        except Exception as e:
+            self.get_logger().debug(f"获取地面真值里程计时发生错误: {e}")
     
     def _save_trajectory_data(self):
         """保存轨迹数据到JSON文件"""

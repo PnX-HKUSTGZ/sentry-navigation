@@ -194,7 +194,13 @@ class BenchmarkRunner(Node):
                         'timestamp': result.get('timestamp', time.time())
                     })
 
-                method_results[scenario_name] = repeats_results
+                # 兼容 report_generator.py / compare_methods.py 的数据结构：
+                # - repeats==1 时保存单个 dict
+                # - repeats>1 时保存聚合后的 dict（附带 repeats 列表）
+                if repeats <= 1:
+                    method_results[scenario_name] = repeats_results[0] if repeats_results else {'error': 'no result'}
+                else:
+                    method_results[scenario_name] = self._aggregate_repeat_results(method, scenario_name, repeats_results)
                 
                 # 测试间隔，让系统稳定
                 self.get_logger().info("等待系统稳定...")
@@ -221,6 +227,59 @@ class BenchmarkRunner(Node):
             self.get_logger().warning(f"保存汇总CSV失败: {e}")
         
         return all_results
+
+    def _aggregate_repeat_results(self, method: str, scenario_name: str, repeats_results: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """将多次重复结果聚合成单个结果 dict，便于生成报告/对比分析。"""
+        valid = [r for r in repeats_results if isinstance(r, dict) and 'error' not in r]
+        aggregated: Dict[str, Any] = {
+            'method': method,
+            'scenario': scenario_name,
+            'repeats': repeats_results,
+            'success': any(r.get('success', False) for r in valid) if valid else False,
+        }
+
+        def mean(values: List[float]) -> float:
+            return sum(values) / len(values) if values else 0.0
+
+        # 聚合 ATE/RPE
+        try:
+            ate_rmses = []
+            rpe_rmses = []
+            for r in valid:
+                ate = r.get('trajectory_metrics', {}).get('ate', {}).get('rmse', None)
+                rpe = r.get('trajectory_metrics', {}).get('rpe', {}).get('rmse', None)
+                if isinstance(ate, (int, float)):
+                    ate_rmses.append(float(ate))
+                if isinstance(rpe, (int, float)):
+                    rpe_rmses.append(float(rpe))
+
+            aggregated['trajectory_metrics'] = {
+                'ate': {'rmse': mean(ate_rmses)},
+                'rpe': {'rmse': mean(rpe_rmses)},
+            }
+        except Exception:
+            aggregated['trajectory_metrics'] = {}
+
+        # 聚合 CPU/MEM（用多次运行的 max 的均值）
+        try:
+            cpu_maxes = []
+            mem_maxes = []
+            for r in valid:
+                cpu_max = r.get('performance_metrics', {}).get('cpu', {}).get('max', None)
+                mem_max = r.get('performance_metrics', {}).get('memory', {}).get('max', None)
+                if isinstance(cpu_max, (int, float)):
+                    cpu_maxes.append(float(cpu_max))
+                if isinstance(mem_max, (int, float)):
+                    mem_maxes.append(float(mem_max))
+
+            aggregated['performance_metrics'] = {
+                'cpu': {'max': mean(cpu_maxes)},
+                'memory': {'max': mean(mem_maxes)},
+            }
+        except Exception:
+            aggregated['performance_metrics'] = {}
+
+        return aggregated
     
     def _run_single_test(self, method: str, scenario_name: str, scenario_config: Dict, repeat_index: int = 1, seed: Optional[int] = None) -> Dict[str, Any]:
         """运行单个测试案例"""

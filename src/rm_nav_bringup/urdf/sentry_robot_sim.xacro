@@ -211,7 +211,7 @@
         <namespace>/</namespace>
         <!-- Remap the default topic -->
         <remapping>cmd_vel:=cmd_vel_chassis</remapping>
-        <remapping>odom:=odom</remapping>
+        <remapping>odom:=/ground_truth/odom</remapping>
       </ros>
 
       <!-- Set control loop update rate -->
@@ -220,7 +220,7 @@
       <publish_rate>10</publish_rate>
 
       <!-- Set if odom required -->
-      <publish_odom>false</publish_odom>
+      <publish_odom>true</publish_odom>
       <publish_odom_tf>false</publish_odom_tf>
 
       <!-- Frame IDs -->

@@ -76,6 +76,26 @@ def main():
             scenario_config = runner.config['test_scenarios'].get(scenario, {})
             if scenario_config:
                 result = runner._run_single_test(method, scenario, scenario_config)
+
+                # 单测也落盘，保证后续 compare_methods / run_evaluation.sh 能找到结果
+                try:
+                    timestamp = __import__('datetime').datetime.now().strftime('%Y%m%d_%H%M%S')
+                    out_dir = Path(args.output_dir)
+                    out_dir.mkdir(parents=True, exist_ok=True)
+
+                    # 保存单测原始结果
+                    single_json = out_dir / f"single_test_result_{method}_{scenario}_{timestamp}.json"
+                    with open(single_json, 'w', encoding='utf-8') as f:
+                        import json
+                        json.dump(result, f, indent=2, ensure_ascii=False)
+                    print(f"📄 单测结果已保存: {single_json}")
+
+                    # 生成统一格式报告与 evaluation_data_*.json
+                    all_results = {method: {scenario: result}}
+                    runner.report_generator.generate_comparison_report(all_results)
+                except Exception as e:
+                    print(f"⚠️ 单测结果/报告保存失败: {e}")
+
                 print(f"\n单个测试结果:")
                 print(f"方法: {method}")
                 print(f"场景: {scenario}")

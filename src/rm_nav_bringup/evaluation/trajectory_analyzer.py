@@ -17,6 +17,7 @@ import os
 import time
 import signal
 import yaml
+import sqlite3
 
 class TrajectoryAnalyzer:
     """轨迹分析器"""
@@ -147,6 +148,11 @@ class TrajectoryAnalyzer:
         """从ROS bag文件提取轨迹数据"""
         try:
             print(f"尝试从rosbag提取轨迹数据: {bag_file}")
+
+            # 优先使用 sqlite 直接解析（不依赖 ros2 bag play + topic echo，且支持 TF-only 估计轨迹）
+            gt_file, est_file = self._extract_from_rosbag_sqlite(bag_file)
+            if gt_file and est_file:
+                return gt_file, est_file
 
             # 确保 bag_file 指向已经记录的 ros2 bag 目录（或 .db3 文件所在目录）
             # 我们使用 subprocess 调用 `ros2 bag play` 并同时用 `ros2 topic echo -p` 导出消息为 YAML，
@@ -331,6 +337,225 @@ class TrajectoryAnalyzer:
         except Exception as e:
             print(f"从rosbag提取轨迹数据失败: {e}")
             return None, None
+
+    def _extract_from_rosbag_sqlite(self, bag_file: str) -> Tuple[Optional[str], Optional[str]]:
+        """直接从 rosbag2 sqlite3 存储中提取轨迹。
+
+        支持：
+        - 地面真值：优先 /ground_truth/odom (nav_msgs/msg/Odometry)
+        - 估计轨迹：优先 /odom (nav_msgs/msg/Odometry)，否则从 /tf + /tf_static 组合 odom->base_link
+        """
+
+        bag_path = Path(bag_file)
+        bag_dir = bag_path if bag_path.is_dir() else bag_path.parent
+
+        db3_files = sorted(bag_dir.glob('*.db3'))
+        if not db3_files:
+            # 如果只有压缩文件，尝试解压到同名 .db3（rosbag2_player 也会这样做，但评估流程未必触发）
+            zstd_files = sorted(bag_dir.glob('*.db3.zstd'))
+            if zstd_files:
+                try:
+                    subprocess.run(['zstd', '-d', '-f', str(zstd_files[0])], check=False, timeout=120)
+                except Exception:
+                    pass
+            db3_files = sorted(bag_dir.glob('*.db3'))
+
+        if not db3_files:
+            return None, None
+
+        db_path = str(db3_files[0])
+
+        try:
+            from rclpy.serialization import deserialize_message
+            from rosidl_runtime_py.utilities import get_message
+        except Exception as e:
+            print(f"无法导入 rclpy/rosidl 以解析 rosbag2 数据: {e}")
+            return None, None
+
+        def bag_ts_to_sec(ts_ns: int) -> float:
+            return float(ts_ns) * 1e-9
+
+        def normalize_quat(q):
+            x, y, z, w = q
+            n = math.sqrt(x*x + y*y + z*z + w*w)
+            if n <= 1e-12:
+                return (0.0, 0.0, 0.0, 1.0)
+            return (x/n, y/n, z/n, w/n)
+
+        def quat_mul(q1, q2):
+            x1, y1, z1, w1 = q1
+            x2, y2, z2, w2 = q2
+            return (
+                w1*x2 + x1*w2 + y1*z2 - z1*y2,
+                w1*y2 - x1*z2 + y1*w2 + z1*x2,
+                w1*z2 + x1*y2 - y1*x2 + z1*w2,
+                w1*w2 - x1*x2 - y1*y2 - z1*z2,
+            )
+
+        def quat_conj(q):
+            x, y, z, w = q
+            return (-x, -y, -z, w)
+
+        def rotate_vec(q, v):
+            # v' = q * (v,0) * q_conj
+            vx, vy, vz = v
+            qv = (vx, vy, vz, 0.0)
+            qc = quat_conj(q)
+            r = quat_mul(quat_mul(q, qv), qc)
+            return (r[0], r[1], r[2])
+
+        def compose(t1, q1, t2, q2):
+            # T = (t1,q1) * (t2,q2)
+            q1n = normalize_quat(q1)
+            q2n = normalize_quat(q2)
+            t2r = rotate_vec(q1n, t2)
+            t = (t1[0] + t2r[0], t1[1] + t2r[1], t1[2] + t2r[2])
+            q = quat_mul(q1n, q2n)
+            return t, normalize_quat(q)
+
+        con = sqlite3.connect(db_path)
+        cur = con.cursor()
+        cur.execute('select id, name, type from topics')
+        topics = {row[0]: (row[1], row[2]) for row in cur.fetchall()}
+
+        # Identify topic IDs
+        odom_topics: List[Tuple[int, str]] = []
+        tf_topic_id = None
+        tf_static_topic_id = None
+        for topic_id, (name, typ) in topics.items():
+            if typ == 'nav_msgs/msg/Odometry':
+                odom_topics.append((topic_id, name))
+            elif name == '/tf' and typ == 'tf2_msgs/msg/TFMessage':
+                tf_topic_id = topic_id
+            elif name == '/tf_static' and typ == 'tf2_msgs/msg/TFMessage':
+                tf_static_topic_id = topic_id
+
+        def _pick_gt_odom_topic_id() -> Optional[int]:
+            if not odom_topics:
+                return None
+
+            def score(name: str) -> int:
+                n = name.lower()
+                if name == '/ground_truth/odom':
+                    return 100
+                if 'ground_truth' in n or 'groundtruth' in n or '/gt' in n or 'gt_' in n:
+                    return 90
+                if name == '/Odometry':
+                    return 80
+                return 10
+
+            best = max(odom_topics, key=lambda it: (score(it[1]), it[1]))
+            return best[0]
+
+        def _pick_est_odom_topic_id() -> Optional[int]:
+            for topic_id, name in odom_topics:
+                if name == '/odom':
+                    return topic_id
+            return None
+
+        gt_odom_topic_id = _pick_gt_odom_topic_id()
+        est_odom_topic_id = _pick_est_odom_topic_id()
+
+        gt_file_path: Optional[str] = None
+        est_file_path: Optional[str] = None
+
+        # Extract GT from /ground_truth/odom
+        if gt_odom_topic_id is not None:
+            odom_type = get_message('nav_msgs/msg/Odometry')
+            tmp_gt = tempfile.NamedTemporaryFile(mode='w', suffix='_gt.tum', delete=False)
+            gt_count = 0
+            for ts_ns, data in cur.execute('select timestamp, data from messages where topic_id=? order by timestamp', (gt_odom_topic_id,)):
+                msg = deserialize_message(data, odom_type)
+                ts = bag_ts_to_sec(ts_ns)
+                p = msg.pose.pose.position
+                o = msg.pose.pose.orientation
+                tmp_gt.write(f"{ts} {p.x} {p.y} {p.z} {o.x} {o.y} {o.z} {o.w}\n")
+                gt_count += 1
+            tmp_gt.close()
+            if gt_count > 0:
+                gt_file_path = tmp_gt.name
+                print(f"从sqlite提取GT Odometry: {gt_count} 条")
+            else:
+                try:
+                    Path(tmp_gt.name).unlink(missing_ok=True)
+                except Exception:
+                    pass
+
+        # Extract EST
+        if est_odom_topic_id is not None:
+            odom_type = get_message('nav_msgs/msg/Odometry')
+            tmp_est = tempfile.NamedTemporaryFile(mode='w', suffix='_est.tum', delete=False)
+            est_count = 0
+            for ts_ns, data in cur.execute('select timestamp, data from messages where topic_id=? order by timestamp', (est_odom_topic_id,)):
+                msg = deserialize_message(data, odom_type)
+                ts = bag_ts_to_sec(ts_ns)
+                p = msg.pose.pose.position
+                o = msg.pose.pose.orientation
+                tmp_est.write(f"{ts} {p.x} {p.y} {p.z} {o.x} {o.y} {o.z} {o.w}\n")
+                est_count += 1
+            tmp_est.close()
+            if est_count > 0:
+                est_file_path = tmp_est.name
+                print(f"从sqlite提取EST Odometry: {est_count} 条")
+            else:
+                try:
+                    Path(tmp_est.name).unlink(missing_ok=True)
+                except Exception:
+                    pass
+
+        # TF-based estimate fallback
+        if est_file_path is None and tf_topic_id is not None and tf_static_topic_id is not None:
+            tf_type = get_message('tf2_msgs/msg/TFMessage')
+
+            # static odom->lidar_odom
+            static_t = (0.0, 0.0, 0.0)
+            static_q = (0.0, 0.0, 0.0, 1.0)
+            for ts_ns, data in cur.execute('select timestamp, data from messages where topic_id=?', (tf_static_topic_id,)):
+                msg = deserialize_message(data, tf_type)
+                for tr in msg.transforms:
+                    if tr.header.frame_id == 'odom' and tr.child_frame_id == 'lidar_odom':
+                        t = tr.transform.translation
+                        r = tr.transform.rotation
+                        static_t = (t.x, t.y, t.z)
+                        static_q = (r.x, r.y, r.z, r.w)
+
+            # dynamic lidar_odom->base_link
+            dyn = []
+            for ts_ns, data in cur.execute('select timestamp, data from messages where topic_id=? order by timestamp', (tf_topic_id,)):
+                msg = deserialize_message(data, tf_type)
+                for tr in msg.transforms:
+                    if tr.header.frame_id == 'lidar_odom' and tr.child_frame_id == 'base_link':
+                        ts = bag_ts_to_sec(ts_ns)
+                        t = tr.transform.translation
+                        r = tr.transform.rotation
+                        dyn.append((ts, (t.x, t.y, t.z), (r.x, r.y, r.z, r.w)))
+
+            if dyn:
+                tmp_est = tempfile.NamedTemporaryFile(mode='w', suffix='_est.tum', delete=False)
+                for ts, t_lidar_base, q_lidar_base in dyn:
+                    t_odom_base, q_odom_base = compose(static_t, static_q, t_lidar_base, q_lidar_base)
+                    tmp_est.write(
+                        f"{ts} {t_odom_base[0]} {t_odom_base[1]} {t_odom_base[2]} "
+                        f"{q_odom_base[0]} {q_odom_base[1]} {q_odom_base[2]} {q_odom_base[3]}\n"
+                    )
+                tmp_est.close()
+                est_file_path = tmp_est.name
+                print(f"从sqlite提取EST TF(odom->base_link): {len(dyn)} 条")
+
+        con.close()
+
+        if not gt_file_path or not est_file_path:
+            # 如果缺任何一个，直接返回失败（调用方会退回到旧方案或简化分析）
+            try:
+                if gt_file_path:
+                    Path(gt_file_path).unlink(missing_ok=True)
+                if est_file_path:
+                    Path(est_file_path).unlink(missing_ok=True)
+            except Exception:
+                pass
+            return None, None
+
+        return gt_file_path, est_file_path
     
     def _calculate_ate(self, gt_file: str, est_file: str) -> Dict[str, float]:
         """计算绝对轨迹误差(ATE)"""
@@ -347,7 +572,7 @@ class TrajectoryAnalyzer:
 
             cmd = [
                 'evo_ape', 'tum', gt_file, est_file,
-                '--verbose', '--no_plot', '--no_warnings',
+                '-v', '--no_warnings',
                 '--save_results', result_file.name
             ]
 
@@ -372,18 +597,20 @@ class TrajectoryAnalyzer:
             ate_stats = {}
 
             for line in output_lines:
-                line_lower = line.lower()
-                if 'rmse' in line_lower and ':' in line:
+                line_lower = line.lower().strip()
+                # evo 不同版本可能输出：
+                #   "rmse: 0.123"  或  "rmse      0.123"
+                if line_lower.startswith('rmse'):
                     ate_stats['rmse'] = self._extract_number_from_line(line)
-                elif 'mean' in line_lower and ':' in line:
+                elif line_lower.startswith('mean'):
                     ate_stats['mean'] = self._extract_number_from_line(line)
-                elif 'median' in line_lower and ':' in line:
+                elif line_lower.startswith('median'):
                     ate_stats['median'] = self._extract_number_from_line(line)
-                elif 'std' in line_lower and ':' in line:
+                elif line_lower.startswith('std'):
                     ate_stats['std'] = self._extract_number_from_line(line)
-                elif 'min' in line_lower and ':' in line:
+                elif line_lower.startswith('min'):
                     ate_stats['min'] = self._extract_number_from_line(line)
-                elif 'max' in line_lower and ':' in line:
+                elif line_lower.startswith('max'):
                     ate_stats['max'] = self._extract_number_from_line(line)
 
             # 返回并包含生成的文件路径以便追踪
@@ -410,8 +637,8 @@ class TrajectoryAnalyzer:
 
             cmd = [
                 'evo_rpe', 'tum', gt_file, est_file,
-                '--delta', '1', '--delta_unit', 's',
-                '--verbose', '--no_plot', '--no_warnings',
+                '--delta', '1', '--delta_unit', 'f',
+                '-v', '--no_warnings',
                 '--save_results', result_file.name
             ]
 
@@ -434,14 +661,14 @@ class TrajectoryAnalyzer:
             rpe_stats = {}
 
             for line in output_lines:
-                line_lower = line.lower()
-                if 'rmse' in line_lower and ':' in line:
+                line_lower = line.lower().strip()
+                if line_lower.startswith('rmse'):
                     rpe_stats['rmse'] = self._extract_number_from_line(line)
-                elif 'mean' in line_lower and ':' in line:
+                elif line_lower.startswith('mean'):
                     rpe_stats['mean'] = self._extract_number_from_line(line)
-                elif 'median' in line_lower and ':' in line:
+                elif line_lower.startswith('median'):
                     rpe_stats['median'] = self._extract_number_from_line(line)
-                elif 'std' in line_lower and ':' in line:
+                elif line_lower.startswith('std'):
                     rpe_stats['std'] = self._extract_number_from_line(line)
 
             rpe_stats['evo_result_file'] = result_file.name
