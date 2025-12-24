@@ -1,4 +1,5 @@
 # Track mesh and other large binary assets via Git LFS
 *.stl filter=lfs diff=lfs merge=lfs -text
-# *.pcd filter=lfs diff=lfs merge=lfs -text
+*.stp filter=lfs diff=lfs merge=lfs -text
+*.pcd filter=lfs diff=lfs merge=lfs -text
 *.ply filter=lfs diff=lfs merge=lfs -text

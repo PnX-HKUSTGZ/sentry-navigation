@@ -1,5 +1,9 @@
 # 🚀 哨兵导航系统 Evaluation 测试任务
 
+在开始任何修改/调参之前：
+- 先阅读 `SYSTEM_FILE_ROLES.md`
+- 并严格遵循其中的“文件职责与工作规则”（尤其是 TF 与 Nav2 参数的单一真相）
+
 **任务类型**: 系统启动 + 导航评估测试  
 **预计时间**: 30-45 分钟  
 **工作目录**: `~/sentry/sentry-navigation.worktrees/worktree-2025-12-18T01-50-14`
