@@ -239,6 +239,6 @@ export SENTRY_EVAL_MAX_SAMPLES=1000        # 最大监控采样数 (默认 1000)
 ✅ 向后兼容，无需额外配置
 
 ### 相关文档
-- `EVALUATION_SAFETY_REPORT.md`: 完整的安全审查报告
-- 修复前后对比、验证清单、环境变量参考
+- `src/rm_nav_bringup/evaluation/README.md`: Evaluation 模块使用说明与输出格式
+- `SYSTEM_FILE_ROLES.md`: 系统文件职责与 evaluation 数据流（包含轨迹提取逻辑概览）
 
