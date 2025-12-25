@@ -111,6 +111,7 @@ ros2 action list | grep -i navigate
 sentry_evaluation_results/
 ├── evaluation_report_YYYYMMDD_HHMMSS.html    # HTML格式的详细报告
 ├── evaluation_data_YYYYMMDD_HHMMSS.json      # JSON格式的原始数据
+├── single_test_result_YYYYMMDD_HHMMSS.json   # 单测模式的结果（--single-test 时生成）
 ├── ate_comparison.png                         # ATE对比图
 ├── cpu_comparison.png                         # CPU使用率对比图
 ├── memory_comparison.png                     # 内存使用对比图
@@ -120,6 +121,12 @@ sentry_evaluation_results/
     ├── fastlio_slam_toolbox_basic_navigation_TIMESTAMP/
     ├── fastlio_slam_toolbox_basic_navigation_TIMESTAMP.json
     └── ...
+
+  ## 🧭 轨迹与指标如何得到
+
+  - 评估过程中会录制 rosbag2（sqlite3 存储）。
+  - 轨迹分析优先从 bag 中解析里程计/真值轨迹；若缺少 `/odom`，会回退到 TF 组合得到估计轨迹（例如从动态 TF + 静态 TF 拼出 `odom->base_link`）。
+  - 在仿真中会尽量录制地面真值里程计（ground truth odom），用于计算 ATE/RPE。
 ```
 
 ## ⚙️ 配置

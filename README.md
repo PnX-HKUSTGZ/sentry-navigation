@@ -258,6 +258,27 @@ ros2 launch rm_nav_bringup bringup.launch.py
 1. **配置文件找不到**:
    ```
    错误: FileNotFoundError: launch_params.yaml not found
+
+---
+
+## 四. Evaluation 自动评估（推荐）
+
+本仓库提供一套自动化评估流程，用于在仿真中对比不同方法/场景并生成报告。
+
+### 4.1 一键运行（最推荐）
+
+在仓库根目录执行：
+
+```bash
+./run_evaluation.sh --single-test
+```
+
+说明：该入口会负责构建（必要时）、启动系统、按场景自动发送导航目标、录制数据并生成结果（HTML + JSON）。
+
+### 4.2 文档入口
+
+- 评估模块使用说明：`src/rm_nav_bringup/evaluation/README.md`
+- 系统文件职责与数据流：`SYSTEM_FILE_ROLES.md`
    解决: 确保 launch_params.yaml 文件存在于 src/rm_nav_bringup/config/ 目录
    ```
 

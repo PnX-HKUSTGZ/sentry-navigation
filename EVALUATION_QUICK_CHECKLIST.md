@@ -9,7 +9,7 @@
 
 ### 1. 代码完整性（2分钟）
 ```bash
-cd /home/nyz/sentry/sentry-navigation.worktrees/worktree-2025-12-18T00-56-23
+cd /home/nyz/sentry/sentry-navigation
 
 # 检查未实现函数
 grep -rn "^\s*pass\s*$" src/rm_nav_bringup/evaluation/ --include="*.py"
@@ -27,13 +27,14 @@ grep -rh "^import\|^from" src/rm_nav_bringup/evaluation/*.py | \
 
 #### rosbag 配置检查
 ```bash
-# 查找 rosbag 配置
-grep -B5 -A15 "StorageOptions\|RecordOptions\|max_bagfile_size\|compression" \
+# 查找 rosbag record CLI 参数
+grep -n "ros2.*bag.*record\|-b \|--compression\|--max-cache-size" \
   src/rm_nav_bringup/evaluation/data_collector.py
 
-# 必须找到：
-# - max_bagfile_size 限制
-# - compression_mode 压缩设置
+# 必须找到（默认值即可）：
+# - -b (单个 bag 文件大小限制)
+# - --compression-mode/--compression-format (压缩)
+# - --max-cache-size (缓存限制)
 ```
 
 #### 内存监控检查
@@ -56,6 +57,12 @@ grep -n "memory.*exceed\|memory.*limit\|emergency.*stop" \
 # 查找测试后清理
 grep -B5 -A10 "cleanup\|_cleanup\|shutdown.*gazebo\|terminate.*process" \
   src/rm_nav_bringup/evaluation/benchmark_runner.py
+```
+
+#### 轨迹分析健壮性检查（2分钟）
+```bash
+# 确认轨迹分析支持 rosbag2 sqlite 解析（以及 TF 回退）
+grep -n "sqlite\|db3\|zstd\|tf" src/rm_nav_bringup/evaluation/trajectory_analyzer.py
 ```
 
 ### 3. 功能逻辑（5分钟）
@@ -127,13 +134,11 @@ grep -n "timeout\|duration.*exceed\|max.*time" \
 
 ### data_collector.py（最关键）
 ```python
-# 应该有类似配置：
-storage_options = rosbag2_py.StorageOptions(
-    max_bagfile_size=500 * 1024 * 1024,  # ← 必须有
-    max_cache_size=100 * 1024 * 1024      # ← 必须有
-)
-record_options.compression_mode = 'file'  # ← 必须有
-record_options.compression_format = 'zstd' # ← 推荐
+# 应该通过 ros2 bag record CLI 加上限制与压缩（示意）：
+# -b 500000000
+# --compression-mode file
+# --compression-format zstd
+# --max-cache-size 1048576
 ```
 
 ### performance_monitor.py

@@ -6,7 +6,7 @@
 
 **任务类型**: 系统启动 + 导航评估测试  
 **预计时间**: 30-45 分钟  
-**工作目录**: `~/sentry/sentry-navigation.worktrees/worktree-2025-12-18T01-50-14`
+**工作目录**: `~/sentry/sentry-navigation`
 
 ---
 
@@ -24,8 +24,10 @@
 
 **启动系统**:
 ```bash
-cd ~/sentry/sentry-navigation.worktrees/worktree-2025-12-18T01-50-14
+cd ~/sentry/sentry-navigation
 source install/setup.bash
+# 如遇 FastDDS SHM 报错，优先使用 wrapper：
+#   ./launch_with_fastdds_fix.sh nav_rviz:=false
 ros2 launch rm_nav_bringup bringup.launch.py nav_rviz:=false &
 ```
 
@@ -176,7 +178,7 @@ ros2 node list | wc -l
 ```
 请帮我执行以下任务：
 
-1. 进入目录 ~/sentry/sentry-navigation.worktrees/worktree-2025-12-18T01-50-14
+1. 进入目录 ~/sentry/sentry-navigation
 2. 启动导航系统: ros2 launch rm_nav_bringup bringup.launch.py nav_rviz:=false
 3. 等待 90 秒后验证系统状态：
    - 检查节点数（期望 40+）
