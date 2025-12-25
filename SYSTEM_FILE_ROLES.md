@@ -59,6 +59,10 @@
 - 地图/点云索引（当前做法）：`src/rm_nav_bringup/config/maps_index.yaml`
 - 大文件策略：`stl / stp / pcd` 必须由 Git LFS 管理（见 `.gitattributes`）
 
+补充（评测所需的 GT 数据来源）：
+- 仿真中用于评测的地面真值里程计（GT odom）由 `src/rm_nav_bringup/urdf/sentry_robot_sim.xacro` 中的 Gazebo planar_move 插件发布。
+  - 约定：优先 remap 到 `/ground_truth/odom`（若实际 bringup 出现不同 topic 名称，以评测模块的动态解析为准）。
+
 规则：
 - 不要手动把 LFS 指针文件当“真实资产”提交。
 - 若出现“内容看似一样但 git 仍显示 modified”，优先检查：是否存在 LFS/非 LFS 历史混用、filter 配置或 worktree 分支差异。
@@ -78,3 +82,8 @@
 规则：
 - 新增调试手段优先做成脚本/文档，不要在核心节点里长期留 printf。
 - 每次定位 TF/导航异常，最小证据集应包括：tf tree、关键 topic hz、Nav2 lifecycle 状态、关键参数快照。
+
+补充（评测链路的“单一真相”与数据流）：
+- 评测模块位于 `src/rm_nav_bringup/evaluation/`，其中轨迹精度评测以“录包结果”为准，不依赖在线 `ros2 bag play + topic echo` 的脆弱导出。
+  - 数据采集：`data_collector.py` 会按类型动态解析并录制 GT/EST 里程计（若存在），并始终录制 `/tf`、`/tf_static` 等轻量话题。
+  - 轨迹提取：`trajectory_analyzer.py` 优先直接读取 rosbag2 sqlite（包含对 `.db3.zstd` 的解压处理），GT 默认取 ground-truth odom，EST 优先 `/odom`，否则用 TF 组合得到 `odom->base_link`。
