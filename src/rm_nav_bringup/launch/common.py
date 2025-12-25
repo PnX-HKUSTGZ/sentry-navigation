@@ -33,6 +33,7 @@ world = launch_params.get("world", "RMUL")  # 获取世界名称，默认为RMUL
 mode = launch_params.get("mode", "nav")  # 获取运行模式 (mapping/nav)，默认为nav
 lio = launch_params.get("lio", "fastlio")  # 激光雷达惯性里程计 (pointlio/fastlio)，默认为fastlio
 localization = launch_params.get("localization", "slam_toolbox")  # 获取定位模式 (amcl/slam_toolbox/icp)
+controller = launch_params.get("controller", "teb")  # 局部控制器 (teb/dwb)
 use_sim = launch_params.get("use_sim", False)  # 是否使用仿真，默认为False
 use_sim_time = LaunchConfiguration(
     'use_sim_time',
@@ -48,6 +49,7 @@ nav_rviz = LaunchConfiguration('nav_rviz', default='true')  # Navigation2 RViz�
 valid_modes = ["mapping", "nav"]
 valid_lio_types = ["fastlio", "pointlio"]
 valid_localization_types = ["amcl", "slam_toolbox", "icp", "small_gicp"]
+valid_controller_types = ["teb", "dwb"]
 
 if mode not in valid_modes:
     raise ValueError(f"无效的mode参数: {mode}. 有效值: {valid_modes}")
@@ -55,12 +57,15 @@ if lio not in valid_lio_types:
     raise ValueError(f"无效的lio参数: {lio}. 有效值: {valid_lio_types}")
 if localization not in valid_localization_types:
     raise ValueError(f"无效的localization参数: {localization}. 有效值: {valid_localization_types}")
+if controller not in valid_controller_types:
+    raise ValueError(f"无效的controller参数: {controller}. 有效值: {valid_controller_types}")
 
 print("启动参数配置:")
 print(f"  世界环境: {world}")
 print(f"  运行模式: {mode}")
 print(f"  LIO算法: {lio}")
 print(f"  定位方法: {localization}")
+print(f"  局部控制器: {controller}")
 print(f"  仿真模式: {use_sim}")
 print(f"  LIO可视化: {use_lio_rviz}")
 
@@ -131,7 +136,59 @@ slam_toolbox_mapping_file_dir = os.path.join(
 
 # ================================= navigation2 parameters =================================
 nav2_map_dir = os.path.join(rm_nav_bringup_dir, "map", world + ".yaml")
-nav2_params_file_dir = os.path.join(config_dir, "nav2_params.yaml")
+
+
+def _load_yaml(path: str) -> dict:
+    with open(path, 'r', encoding='utf-8') as f:
+        data = yaml.safe_load(f) or {}
+    if not isinstance(data, dict):
+        raise ValueError(f"Nav2 params yaml must be a mapping at top-level: {path}")
+    return data
+
+
+def _deep_merge(base: dict, overlay: dict, *, replace_keys: set[str]) -> dict:
+    """Recursively merge overlay into base.
+
+    For keys in replace_keys, overlay fully replaces base (no recursive merge).
+    """
+    result = dict(base)
+    for key, overlay_value in overlay.items():
+        if key in replace_keys:
+            result[key] = overlay_value
+            continue
+
+        base_value = result.get(key)
+        if isinstance(base_value, dict) and isinstance(overlay_value, dict):
+            result[key] = _deep_merge(base_value, overlay_value, replace_keys=replace_keys)
+        else:
+            result[key] = overlay_value
+    return result
+
+
+def _get_nav2_params_file(config_dir: str, controller_type: str) -> str:
+    base_params = os.path.join(config_dir, "nav2_params.yaml")
+    if controller_type == 'teb':
+        return base_params
+
+    overlay = os.path.join(config_dir, f"nav2_controller_{controller_type}.yaml")
+    if not os.path.exists(overlay):
+        raise FileNotFoundError(f"Nav2 controller overlay not found: {overlay}")
+
+    merged = _deep_merge(
+        _load_yaml(base_params),
+        _load_yaml(overlay),
+        replace_keys={'controller_server'},
+    )
+
+    out_dir = os.path.join('/tmp', 'rm_nav_bringup')
+    os.makedirs(out_dir, exist_ok=True)
+    out_file = os.path.join(out_dir, f"nav2_params_{'sim' if use_sim else 'real'}_{controller_type}.yaml")
+    with open(out_file, 'w', encoding='utf-8') as f:
+        yaml.safe_dump(merged, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+    return out_file
+
+
+nav2_params_file_dir = _get_nav2_params_file(config_dir, controller)
 
 # =============================== icp_registration parameters ==============================
 icp_pcd_dir = os.path.join(rm_nav_bringup_dir, "PCD", world + ".pcd")

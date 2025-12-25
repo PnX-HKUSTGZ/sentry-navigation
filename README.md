@@ -96,30 +96,63 @@
 主要配置文件位于 `src/rm_nav_bringup/config/launch_params.yaml`：
 
 ```yaml
-# 世界环境名称
-world: "RMUL"
+base_link2livox_frame:
+   xyz: '"0.12 0.0 0.175"'
+   rpy: '"0.0  0.0  0.0"'
 
-# 运行模式: mapping(建图) 或 nav(导航)  
-mode: "mapping"
+# 局部控制器: teb(默认) 或 dwb
+controller: teb
 
 # LIO算法: fastlio 或 pointlio
-lio: "fastlio"
+lio: fastlio
 
-# 定位算法: slam_toolbox, amcl 或 icp (仅nav模式生效)
-localization: "slam_toolbox"
+# 定位算法: slam_toolbox, amcl, icp, small_gicp (仅 nav 模式生效)
+localization: slam_toolbox
 
-# 环境类型: true(仿真) 或 false(真实)
+# 运行模式: mapping(建图) 或 nav(导航)
+mode: nav
+
+# 是否使用仿真：true(仿真) / false(真实)
 use_sim: true
 
-# 可视化选项
-use_lio_rviz: false  # LIO点云可视化
-use_nav_rviz: true   # Navigation2可视化
+# 是否启动 LIO 的 RViz
+use_lio_rviz: false
 
-# 雷达坐标变换参数
-base_link2livox_frame:
-  xyz: "\"0.12 0.0 0.175\""
-  rpy: "\"0.0  0.0  0.0\""
+# 世界/地图名称
+world: RMUC_24
 ```
+
+#### 3.1.2 参数权责与分层规则（重要）
+
+为了避免“同名配置不同行为/线上线下差异”，本仓库对 Nav2 参数的权责边界约定如下：
+
+1) **唯一权威入口：rm_nav_bringup**
+
+- 正式运行（仿真/实车）的 Nav2 参数文件由 rm_nav_bringup 选择并传入 Nav2。
+- 选择逻辑在 `rm_nav_bringup/launch/common.py`：
+   - `use_sim: true` → 读取 `rm_nav_bringup/config/simulation/` 下的参数
+   - `use_sim: false` → 读取 `rm_nav_bringup/config/reality/` 下的参数
+
+2) **rm_navigation 包内的 params 不是“运行时真相”**
+
+- `rm_navigation/rm_navigation/params/nav2_params.yaml` 是 rm_navigation 启动文件的默认值（只有你直接 `ros2 launch rm_navigation ...` 且不传 `params_file` 才会用到）。
+- 当你按推荐方式 `ros2 launch rm_nav_bringup bringup.launch.py` 启动时，rm_nav_bringup 会显式把 `params_file` 传给 rm_navigation 的 bringup，因此 rm_navigation 包内那份默认 params 不参与运行。
+
+3) **参数分层：场景层 + 控制器层（overlay）**
+
+- 场景层（simulation/reality）为主：
+   - `rm_nav_bringup/config/simulation/nav2_params.yaml`
+   - `rm_nav_bringup/config/reality/nav2_params.yaml`
+- 控制器层只覆盖 `controller_server`：
+   - `rm_nav_bringup/config/simulation/nav2_controller_dwb.yaml`
+   - `rm_nav_bringup/config/reality/nav2_controller_dwb.yaml`
+- `controller: teb` 时不生成文件，直接使用场景层的 `nav2_params.yaml`。
+- `controller: dwb` 时，启动阶段会生成合并后的 params 文件到 `/tmp/rm_nav_bringup/` 并作为 `params_file` 传给 Nav2。
+
+4) **base_link_fake / fake_vel_transform 属于“控制层配套机制”**
+
+- 当前默认 Nav2 配置使用 `robot_base_frame: base_link_fake`，并配套启动 `fake_vel_transform`（用于将规划朝向与底盘朝向解耦，避免小陀螺时跟踪失效）。
+- 因此：不要在未理解该机制的情况下把 `robot_base_frame` 直接改回 `base_link`，否则会导致局部控制行为与评估结论不一致。
 
 #### 3.1.2 启动方式
 
@@ -157,9 +190,13 @@ ros2 launch rm_nav_bringup bringup.launch.py
    - `true` - 启动Gazebo仿真环境
    - `false` - 使用真实硬件环境
 
-6. **可视化选项**:
+6. **controller** - 局部控制器:
+   - `teb` - 默认控制器（TEB），配置在 `rm_nav_bringup/config/{simulation|reality}/nav2_params.yaml`
+   - `dwb` - 切换到 DWB（只覆盖 `controller_server`），配置在 `rm_nav_bringup/config/{simulation|reality}/nav2_controller_dwb.yaml`
+
+7. **可视化选项**:
    - `use_lio_rviz` - 是否启动LIO算法的RViz点云可视化
-   - `use_nav_rviz` - 是否启动Navigation2的RViz导航可视化
+   - Navigation2 的 RViz 由 launch 参数 `nav_rviz` 控制（默认 true，可在命令行覆盖）
 
 #### 重要提示:
 1. **AMCL定位**: 启动后需在RViz中手动设置初始位姿
@@ -179,10 +216,10 @@ ros2 launch rm_nav_bringup bringup.launch.py
    lio: "fastlio"
    use_sim: true
    use_lio_rviz: false
-   use_nav_rviz: true
+   # Navigation2 RViz 在命令行用 nav_rviz 控制
    
    # 启动
-   ros2 launch rm_nav_bringup bringup.launch.py
+   ros2 launch rm_nav_bringup bringup.launch.py nav_rviz:=true
    ```
 
 2. **仿真导航模式**:
@@ -194,10 +231,10 @@ ros2 launch rm_nav_bringup bringup.launch.py
    localization: "slam_toolbox"
    use_sim: true
    use_lio_rviz: false
-   use_nav_rviz: true
+   # Navigation2 RViz 在命令行用 nav_rviz 控制
    
    # 启动
-   ros2 launch rm_nav_bringup bringup.launch.py
+   ros2 launch rm_nav_bringup bringup.launch.py nav_rviz:=true
    ```
 
 #### 3.3.2 真实环境示例
@@ -210,10 +247,10 @@ ros2 launch rm_nav_bringup bringup.launch.py
    lio: "fastlio"
    use_sim: false
    use_lio_rviz: false
-   use_nav_rviz: true
+   # Navigation2 RViz 在命令行用 nav_rviz 控制
    
    # 启动
-   ros2 launch rm_nav_bringup bringup.launch.py
+   ros2 launch rm_nav_bringup bringup.launch.py nav_rviz:=true
    ```
 
    **建图完成后的保存操作**:
@@ -229,10 +266,10 @@ ros2 launch rm_nav_bringup bringup.launch.py
    localization: "slam_toolbox"
    use_sim: false
    use_lio_rviz: false
-   use_nav_rviz: true
+   # Navigation2 RViz 在命令行用 nav_rviz 控制
    
    # 启动
-   ros2 launch rm_nav_bringup bringup.launch.py
+   ros2 launch rm_nav_bringup bringup.launch.py nav_rviz:=true
    ```
 
    **注意**: 确保栅格地图文件 `YOUR_WORLD_NAME.yaml` 存放在 `src/rm_nav_bringup/map/` 目录，点云地图文件 `YOUR_WORLD_NAME.pcd` 存放在 `src/rm_nav_bringup/PCD/` 目录。
@@ -396,7 +433,7 @@ localization: "slam_toolbox"     # 定位算法选择
 
 # ========= 可视化配置 =========
 use_lio_rviz: false             # LIO可视化开关
-use_nav_rviz: true              # 导航可视化开关
+nav_rviz:=true                  # 导航 RViz（launch 参数，默认 true）
 
 # ========= 硬件配置 =========
 base_link2livox_frame:          # 雷达坐标变换

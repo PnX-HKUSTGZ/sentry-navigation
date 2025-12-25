@@ -1,6 +1,7 @@
 base_link2livox_frame:
   rpy: '"0.0  0.0  0.0"'
   xyz: '"0.12 0.0 0.175"'
+controller: teb
 lio: fastlio
 localization: slam_toolbox
 mode: nav
