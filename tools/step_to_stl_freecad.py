@@ -5,6 +5,21 @@ STEP -> STL conversion helper for headless FreeCAD
 Usage (with FreeCADCmd):
   FreeCADCmd tools/step_to_stl_freecad.py /path/in.stp /path/out.stl --scale 0.001
 
+Some FreeCAD builds (including the AppImage in this repo) ship `freecadcmd` which
+does not reliably accept extra script arguments on the command line. A robust
+headless way is to run console mode and inject `sys.argv`:
+
+    /path/to/freecadcmd -c <<'PY'
+    import sys
+    sys.argv=[
+        'step_to_stl_freecad.py','/path/in.stp','/path/out.stl',
+        '--scale','0.001','--linear-deflection','2.0','--angular-deflection','0.8'
+    ]
+    p='/abs/path/to/step_to_stl_freecad.py'
+    exec(compile(open(p,'r',encoding='utf-8').read(), p, 'exec'), {'__name__':'__main__'})
+    sys.exit(0)
+    PY
+
 If you're using the included AppImage in this repo, you can run (example):
   ./squashfs-root/usr/bin/FreeCADCmd tools/step_to_stl_freecad.py \
     /home/nyz/sentry/UTF-8__RMUC2026.stp \
@@ -20,6 +35,7 @@ Notes:
 import argparse
 import os
 import sys
+import time
 
 
 def main():
@@ -29,14 +45,27 @@ def main():
     parser.add_argument('--scale', type=float, default=0.001, help='scale factor applied to geometry (default: 0.001 for mm->m)')
     parser.add_argument('--linear-deflection', type=float, default=0.5, help='mesh linear deflection for tessellation (smaller => finer mesh)')
     parser.add_argument('--angular-deflection', type=float, default=0.5, help='angular deflection for tessellation')
+    parser.add_argument(
+        '--stage',
+        choices=['all', 'read', 'mesh', 'write'],
+        default='all',
+        help='Run only a specific stage for profiling (default: all)',
+    )
     args = parser.parse_args()
+
+    # Ensure we see logs even if the process is interrupted by timeout
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+        sys.stderr.reconfigure(line_buffering=True)
+    except Exception:
+        pass
 
     # Import FreeCAD modules at runtime so the script can be imported on systems without FreeCAD
     try:
         import FreeCAD
         import Part
         import Mesh
-        import Draft
+        import MeshPart
     except Exception as e:
         print("ERROR: This script must be run with FreeCAD's Python (FreeCADCmd).", file=sys.stderr)
         print("Detail:", e, file=sys.stderr)
@@ -53,47 +82,69 @@ def main():
     if outdir and not os.path.isdir(outdir):
         os.makedirs(outdir, exist_ok=True)
 
-    print(f"Loading STEP: {infile}")
+    t0 = time.time()
+    print(f"Loading STEP: {infile}", flush=True)
     try:
         shape = Part.read(infile)
     except Exception as e:
         print(f"ERROR reading STEP: {e}", file=sys.stderr)
         sys.exit(4)
+    print(f"Loaded STEP in {time.time() - t0:.2f}s", flush=True)
 
-    # Create a temporary document and object
-    doc = FreeCAD.newDocument()
-    part_obj = doc.addObject('Part::Feature', 'Imported')
-    part_obj.Shape = shape
+    if args.stage == 'read':
+        print("Stage=read complete.", flush=True)
+        return
 
-    # Apply scale by creating a scaled copy using Draft.scale
+    # Scale the shape geometry directly (fast, no Draft dependency)
     scale = float(args.scale)
     if abs(scale - 1.0) > 1e-12:
-        print(f"Scaling object by {scale} (origin at 0,0,0)")
+        print(f"Scaling geometry by {scale} (origin at 0,0,0)", flush=True)
+        m = FreeCAD.Matrix()
+        m.A11 = scale
+        m.A22 = scale
+        m.A33 = scale
+        t_scale = time.time()
         try:
-            # Draft.scale expects a list of objects and returns scaled objects
-            Draft.scale([part_obj], delta=FreeCAD.Vector(scale, scale, scale), center=FreeCAD.Vector(0, 0, 0))
+            shape = shape.transformGeometry(m)
         except Exception as e:
-            print(f"WARNING: Draft.scale failed: {e}. Trying an alternative scaling via placement matrix.", file=sys.stderr)
-            # Fallback: apply a placement matrix scaling to the shape
-            m = FreeCAD.Matrix()
-            m.A11 = scale
-            m.A22 = scale
-            m.A33 = scale
-            try:
-                part_obj.Shape = part_obj.Shape.transformGeometry(m)
-            except Exception as e2:
-                print(f"ERROR: fallback scaling failed: {e2}", file=sys.stderr)
-                sys.exit(6)
-
-    # Export mesh to STL
+            print(f"ERROR: scaling failed: {e}", file=sys.stderr)
+            sys.exit(6)
+        print(f"Scaled geometry in {time.time() - t_scale:.2f}s", flush=True)
+    # Mesh explicitly with controlled quality (avoids slow/implicit defaults)
+    print(
+        "Meshing with "
+        f"linear_deflection={args.linear_deflection}, angular_deflection={args.angular_deflection}"
+        ,
+        flush=True,
+    )
+    t_mesh = time.time()
     try:
-        print(f"Exporting STL to: {outfile}")
-        Mesh.export([part_obj], outfile)
+        mesh = MeshPart.meshFromShape(
+            Shape=shape,
+            LinearDeflection=float(args.linear_deflection),
+            AngularDeflection=float(args.angular_deflection),
+            Relative=False,
+        )
+    except Exception as e:
+        print(f"ERROR meshing shape: {e}", file=sys.stderr)
+        sys.exit(7)
+    print(f"Meshed in {time.time() - t_mesh:.2f}s", flush=True)
+
+    if args.stage == 'mesh':
+        print("Stage=mesh complete.", flush=True)
+        return
+
+    # Write STL
+    try:
+        print(f"Writing STL to: {outfile}", flush=True)
+        t_write = time.time()
+        mesh.write(outfile)
+        print(f"Wrote STL in {time.time() - t_write:.2f}s", flush=True)
     except Exception as e:
         print(f"ERROR exporting STL: {e}", file=sys.stderr)
         sys.exit(5)
 
-    print("Done.")
+    print(f"Done in {time.time() - t0:.2f}s", flush=True)
 
 
 if __name__ == '__main__':
