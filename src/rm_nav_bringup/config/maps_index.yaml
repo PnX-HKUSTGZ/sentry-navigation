@@ -5,12 +5,18 @@ worlds:
     pcd: "src/rm_nav_bringup/PCD/RMUC.pcd"
     pcd_exists: true
     status: "missing-yaml"
+  RMUC26:
+    yaml: "src/rm_nav_bringup/map/RMUC26.yaml"
+    yaml_exists: true
+    pcd: "src/rm_nav_bringup/PCD/RMUC26.pcd"
+    pcd_exists: true
+    status: "ok"
   RMUC_24:
     yaml: "src/rm_nav_bringup/map/RMUC_24.yaml"
     yaml_exists: true
     pcd: "src/rm_nav_bringup/PCD/RMUC_24.pcd"
-    pcd_exists: false
-    status: "missing-pcd"
+    pcd_exists: true
+    status: "ok"
   RMUC_25:
     yaml: "src/rm_nav_bringup/map/RMUC_25.yaml"
     yaml_exists: true
@@ -19,20 +25,25 @@ worlds:
     status: "missing-pcd"
   RMUL:
     yaml: "src/rm_nav_bringup/map/RMUL.yaml"
-    yaml_exists: false
+    yaml_exists: true
     pcd: "src/rm_nav_bringup/PCD/RMUL.pcd"
     pcd_exists: true
-    status: "missing-yaml"
+    status: "ok"
+  RMUL26:
+    yaml: "src/rm_nav_bringup/map/RMUL26.yaml"
+    yaml_exists: true
+    pcd: "src/rm_nav_bringup/PCD/RMUL26.pcd"
+    pcd_exists: true
+    status: "ok"
+  RMUL2026:
+    yaml: "src/rm_nav_bringup/map/RMUL2026.yaml"
+    yaml_exists: true
+    pcd: "src/rm_nav_bringup/PCD/RMUL2026.pcd"
+    pcd_exists: true
+    status: "ok"
   RMUL_24:
     yaml: "src/rm_nav_bringup/map/RMUL_24.yaml"
     yaml_exists: true
     pcd: "src/rm_nav_bringup/PCD/RMUL_24.pcd"
     pcd_exists: false
     status: "missing-pcd"
-  RMUC26:
-    yaml: "src/rm_nav_bringup/map/RMUC26.yaml"
-    yaml_exists: true
-    pcd: "src/rm_nav_bringup/PCD/RMUC26.pcd"
-    pcd_exists: true
-    status: "complete"
-
