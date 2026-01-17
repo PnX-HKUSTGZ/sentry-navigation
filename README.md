@@ -161,6 +161,10 @@ world: RMUC_24
 ```bash
 # 启动完整导航系统
 ros2 launch rm_nav_bringup bringup.launch.py
+
+# 命令行选择地图（覆盖 launch_params.yaml 的 world）
+# 例如选择新增 RMUL2026：
+ros2 launch rm_nav_bringup bringup.launch.py map:=RMUL2026 nav_rviz:=false
 ```
 
 ### 3.2 配置参数详解
