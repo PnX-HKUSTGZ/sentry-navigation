@@ -19,12 +19,22 @@ import os
 import sys
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import TimerAction, DeclareLaunchArgument
+from launch.actions import TimerAction, DeclareLaunchArgument, OpaqueFunction
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 sys.path.append(os.path.join(get_package_share_directory('rm_nav_bringup'), 'launch'))
 
-def generate_launch_description():
-    # 从 common 模块导入所有必要的变量和节点定义
+
+def _launch_setup(context, *args, **kwargs):
+    map_override = LaunchConfiguration('map').perform(context).strip()
+    if map_override:
+        os.environ['RM_NAV_MAP'] = map_override
+
+    localization_override = LaunchConfiguration('localization').perform(context).strip()
+    if localization_override:
+        os.environ['RM_NAV_LOCALIZATION'] = localization_override
+
+    # 从 common 模块导入所有必要的变量和节点定义（导入时会读取 RM_NAV_MAP / RM_NAV_LOCALIZATION 覆盖）
     from common import (
         mode,
         lio,
@@ -32,6 +42,7 @@ def generate_launch_description():
         use_sim,
         use_lio_rviz,
         icp_map_exists,
+        slam_map_exists,
         fastlio_rviz_cfg_dir,
         pointlio_rviz_cfg_dir,
         # 节点定义
@@ -53,7 +64,125 @@ def generate_launch_description():
         start_amcl,
         start_mapping_node,
     )
+
+    actions = []
+
+    # 1. 仿真环境
+    if use_sim:
+        print("1. 启动仿真环境...")
+        actions.append(start_rm_simulation)
+    else:
+        print("1. 启动真实硬件环境...")
+        actions.append(start_livox_ros_driver2_node)
+        actions.append(start_robot_state_publisher)
+
+    # 2. 传感器处理节点
+    print("2. 启动传感器处理节点...")
+    actions.append(start_imu_complementary_filter)
+    actions.append(bringup_linefit_ground_segmentation_node)
+    actions.append(bringup_pointcloud_to_laserscan_node)
+    # 3. LIO算法
+
+    actions.append(odom_tf)
+    print("3. 启动LIO算法...")
+    if lio == "fastlio":
+        print("   启动FAST-LIO算法...")
+        actions.append(fast_lio_node)
+        if use_lio_rviz:
+            print("   启动FAST-LIO可视化...")
+            fastlio_rviz = Node(
+                package="rviz2",
+                executable="rviz2",
+                arguments=["-d", fastlio_rviz_cfg_dir],
+            )
+            actions.append(fastlio_rviz)
+
+    elif lio == "pointlio":
+        print("   启动Point-LIO算法...")
+        actions.append(point_lio_node)
+        if use_lio_rviz:
+            print("   启动Point-LIO可视化...")
+            pointlio_rviz = Node(
+                package="rviz2",
+                executable="rviz2",
+                arguments=["-d", pointlio_rviz_cfg_dir],
+            )
+            actions.append(pointlio_rviz)
+
+    # 4. 定位系统
+    if mode == "nav":
+        print("4. 启动定位系统...")
+        print(f"   启动导航模式，使用{localization}定位...")
+        
+        # 根据定位方法启动相应节点
+        if localization == "slam_toolbox":
+            if not slam_map_exists:
+                print("   [警告] slam_toolbox 缺少 posegraph，建议改用 amcl 或 icp/small_gicp")
+            actions.append(slam_toolbox_node)
+
+        elif localization == "amcl":
+            # AMCL 启动文件已包含 map_server（并统一由一个 lifecycle_manager 管理），避免重复启动
+            actions.append(start_amcl)
+
+        elif localization == "icp":
+            # ICP定位需要延迟启动，等待LIO稳定
+            if icp_map_exists and icp_node is not None:
+                print("   ICP定位将在7秒后启动...")
+                icp_timer = TimerAction(period=7.0, actions=[icp_node, start_map_server])
+                actions.append(icp_timer)
+            else:
+                print("   未找到ICP所需的PCD地图，跳过ICP，仅启动Map Server（如可用）...")
+                actions.append(start_map_server)
+
+        elif localization == "small_gicp":
+            # Small GICP定位需要延迟启动，等待LIO稳定
+            if small_gicp_node is not None:
+                print("   Small GICP定位将在7秒后启动...")
+                small_gicp_timer = TimerAction(period=7.0, actions=[small_gicp_node, start_map_server])
+                actions.append(small_gicp_timer)
+            else:
+                print("   未找到Small-GICP所需的PCD地图或节点未创建，跳过Small-GICP，仅启动Map Server（如可用）...")
+                actions.append(start_map_server)
+
+        else:
+            print(f"   警告：未知的定位方法 '{localization}'，将使用默认的slam_toolbox")
+            actions.append(slam_toolbox_node)
+
+    # 5. 辅助节点
+    print("5. 启动辅助节点...")
+    actions.append(bringup_fake_vel_transform_node)
+
+    # 6. 建图功能
+    if mode == "mapping":
+        print("6. 启动建图功能...")
+        actions.append(start_mapping_node)
+
+    # 7. 导航系统
+    print("7. 启动Navigation2导航系统...")
+    actions.append(start_navigation2)
+
+    print("哨兵导航系统启动完成！")
+    return actions
+
+
+def generate_launch_description():
     ld = LaunchDescription()
+
+    ld.add_action(
+        DeclareLaunchArgument(
+            'map',
+            default_value='',
+            description='Map/PCD resource name override. Example: map:=RMUL2026. If empty, uses config/launch_params.yaml world.'
+        )
+    )
+
+    ld.add_action(
+        DeclareLaunchArgument(
+            'localization',
+            default_value='',
+            description='Localization override: amcl|slam_toolbox|icp|small_gicp. If empty, uses config/launch_params.yaml.'
+        )
+    )
 
     # 允许在命令行覆盖：ros2 launch rm_nav_bringup bringup.launch.py nav_rviz:=false
     ld.add_action(
@@ -63,94 +192,6 @@ def generate_launch_description():
             description='Whether to launch Navigation2 RViz (rm_navigation/rviz_launch.py)'
         )
     )
-    
-    # 1. 仿真环境
-    if use_sim:
-        print("1. 启动仿真环境...")
-        ld.add_action(start_rm_simulation)
-    else:
-        print("1. 启动真实硬件环境...")
-        ld.add_action(start_livox_ros_driver2_node)
-        ld.add_action(start_robot_state_publisher)
 
-    # 2. 传感器处理节点
-    print("2. 启动传感器处理节点...")
-    ld.add_action(start_imu_complementary_filter)
-    ld.add_action(bringup_linefit_ground_segmentation_node)
-    ld.add_action(bringup_pointcloud_to_laserscan_node)
-    # 3. LIO算法
-
-    ld.add_action(odom_tf)
-    print("3. 启动LIO算法...")
-    if lio == "fastlio":
-        print("   启动FAST-LIO算法...")
-        ld.add_action(fast_lio_node)
-        if use_lio_rviz:
-            print("   启动FAST-LIO可视化...")
-            fastlio_rviz = Node(
-                package="rviz2",
-                executable="rviz2",
-                arguments=["-d", fastlio_rviz_cfg_dir],
-            )
-            ld.add_action(fastlio_rviz)
-
-    elif lio == "pointlio":
-        print("   启动Point-LIO算法...")
-        ld.add_action(point_lio_node)
-        if use_lio_rviz:
-            print("   启动Point-LIO可视化...")
-            pointlio_rviz = Node(
-                package="rviz2",
-                executable="rviz2",
-                arguments=["-d", pointlio_rviz_cfg_dir],
-            )
-            ld.add_action(pointlio_rviz)
-
-    # 4. 定位系统
-    if mode == "nav":
-        print("4. 启动定位系统...")
-        print(f"   启动导航模式，使用{localization}定位...")
-        
-        # 根据定位方法启动相应节点
-        if localization == "slam_toolbox":
-            ld.add_action(slam_toolbox_node)
-
-        elif localization == "amcl":
-            ld.add_action(start_amcl)
-            ld.add_action(start_map_server)
-
-        elif localization == "icp":
-            # ICP定位需要延迟启动，等待LIO稳定
-            if icp_map_exists and icp_node is not None:
-                print("   ICP定位将在7秒后启动...")
-                icp_timer = TimerAction(period=7.0, actions=[icp_node, start_map_server])
-                ld.add_action(icp_timer)
-            else:
-                print("   未找到ICP所需的PCD地图，跳过ICP，仅启动Map Server（如可用）...")
-                ld.add_action(start_map_server)
-
-        elif localization == "small_gicp":
-            # Small GICP定位需要延迟启动，等待LIO稳定
-            print("   Small GICP定位将在7秒后启动...")
-            small_gicp_timer = TimerAction(period=7.0, actions=[small_gicp_node, start_map_server])
-            ld.add_action(small_gicp_timer)
-
-        else:
-            print(f"   警告：未知的定位方法 '{localization}'，将使用默认的slam_toolbox")
-            ld.add_action(slam_toolbox_node)
-
-    # 5. 辅助节点
-    print("5. 启动辅助节点...")
-    ld.add_action(bringup_fake_vel_transform_node)
-
-    # 6. 建图功能
-    if mode == "mapping":
-        print("6. 启动建图功能...")
-        ld.add_action(start_mapping_node)
-
-    # 7. 导航系统
-    print("7. 启动Navigation2导航系统...")
-    ld.add_action(start_navigation2)
-
-    print("哨兵导航系统启动完成！")
+    ld.add_action(OpaqueFunction(function=_launch_setup))
     return ld

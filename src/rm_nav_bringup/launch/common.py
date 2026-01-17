@@ -29,10 +29,18 @@ except yaml.YAMLError as e:
     raise yaml.YAMLError(f"launch_params.yaml 文件格式错误: {e}")
 
 # 获取基本参数
-world = launch_params.get("world", "RMUL")  # 获取世界名称，默认为RMUL
+# 注意：launch_params.yaml 里的 world 既被用作仿真 world，也被用作“地图资源名”。
+# 为支持命令行选择地图（map:=XXX）且不影响仿真 world，这里拆分：
+# - world: 仿真 world（仍来自配置文件）
+# - map_name: 地图/PCD 资源名（可由环境变量覆盖）
+world = launch_params.get("world", "RMUL")  # 仿真世界名称，默认为RMUL
+_env_map_name = (os.environ.get("RM_NAV_MAP", "").strip() or os.environ.get("RM_NAV_WORLD", "").strip())
+map_name = _env_map_name if _env_map_name else world
+
 mode = launch_params.get("mode", "nav")  # 获取运行模式 (mapping/nav)，默认为nav
 lio = launch_params.get("lio", "fastlio")  # 激光雷达惯性里程计 (pointlio/fastlio)，默认为fastlio
-localization = launch_params.get("localization", "slam_toolbox")  # 获取定位模式 (amcl/slam_toolbox/icp)
+_env_localization = os.environ.get("RM_NAV_LOCALIZATION", "").strip()
+localization = _env_localization if _env_localization else launch_params.get("localization", "slam_toolbox")  # 获取定位模式 (amcl/slam_toolbox/icp)
 controller = launch_params.get("controller", "teb")  # 局部控制器 (teb/dwb)
 use_sim = launch_params.get("use_sim", False)  # 是否使用仿真，默认为False
 use_sim_time = LaunchConfiguration(
@@ -62,6 +70,7 @@ if controller not in valid_controller_types:
 
 print("启动参数配置:")
 print(f"  世界环境: {world}")
+print(f"  地图资源: {map_name}")
 print(f"  运行模式: {mode}")
 print(f"  LIO算法: {lio}")
 print(f"  定位方法: {localization}")
@@ -126,7 +135,7 @@ pointlio_mid360_params = os.path.join(
 pointlio_rviz_cfg_dir = os.path.join(rm_nav_bringup_dir, "rviz", "pointlio.rviz")
 
 # ================================ slam_toolbox parameters ================================
-slam_toolbox_map_dir = os.path.join(rm_nav_bringup_dir, "map", world)
+slam_toolbox_map_dir = os.path.join(rm_nav_bringup_dir, "map", map_name)
 slam_toolbox_localization_file_dir = os.path.join(
     config_dir, "mapper_params_localization.yaml"
 )
@@ -135,7 +144,7 @@ slam_toolbox_mapping_file_dir = os.path.join(
 )
 
 # ================================= navigation2 parameters =================================
-nav2_map_dir = os.path.join(rm_nav_bringup_dir, "map", world + ".yaml")
+nav2_map_dir = os.path.join(rm_nav_bringup_dir, "map", map_name + ".yaml")
 
 
 def _load_yaml(path: str) -> dict:
@@ -191,13 +200,13 @@ def _get_nav2_params_file(config_dir: str, controller_type: str) -> str:
 nav2_params_file_dir = _get_nav2_params_file(config_dir, controller)
 
 # =============================== icp_registration parameters ==============================
-icp_pcd_dir = os.path.join(rm_nav_bringup_dir, "PCD", world + ".pcd")
+icp_pcd_dir = os.path.join(rm_nav_bringup_dir, "PCD", map_name + ".pcd")
 icp_registration_params_dir = os.path.join(
     config_dir, "icp_registration.yaml"
 )
 
 # ============================= small_gicp_registration parameters ========================
-small_gicp_pcd_dir = os.path.join(rm_nav_bringup_dir, "PCD", world + ".pcd")
+small_gicp_pcd_dir = os.path.join(rm_nav_bringup_dir, "PCD", map_name + ".pcd")
 small_gicp_registration_params_dir = os.path.join(
     config_dir, "small_gicp_registration.yaml"
 )
@@ -207,6 +216,12 @@ icp_map_exists = os.path.exists(icp_pcd_dir)
 nav2_map_exists = os.path.exists(nav2_map_dir)
 slam_map_exists = os.path.exists(slam_toolbox_map_dir) or os.path.exists(slam_toolbox_map_dir + ".posegraph")
 small_gicp_map_exists = os.path.exists(small_gicp_pcd_dir)
+
+if localization == "slam_toolbox" and not slam_map_exists:
+    print(
+        f"[警告] 选择了 slam_toolbox 定位，但未找到 posegraph/serialization 地图: {slam_toolbox_map_dir}(.posegraph)。"
+        " slam_toolbox localization 需要对应的 posegraph；没有的话建议使用 amcl 或 icp/small_gicp。"
+    )
 
 if localization == "icp" and not icp_map_exists:
     print(f"[警告] 选择了 ICP 定位，但未找到 PCD 地图: {icp_pcd_dir}，将跳过 ICP 节点启动，仅启动 map_server（如有）。")
@@ -286,6 +301,7 @@ start_amcl = IncludeLaunchDescription(
     ),
     launch_arguments={
         "use_sim_time": use_sim_time,
+        "map": nav2_map_dir,
         "params_file": nav2_params_file_dir,
     }.items(),
 )
