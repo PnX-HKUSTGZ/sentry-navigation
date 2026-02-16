@@ -7,6 +7,7 @@ from ament_index_python.packages import get_package_share_directory, get_package
 from launch import LaunchDescription
 from launch.substitutions import LaunchConfiguration, Command
 from launch.actions import IncludeLaunchDescription, DeclareLaunchArgument, GroupAction
+from launch.actions import TimerAction
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.actions import Node
 from launch.conditions import LaunchConfigurationEquals
@@ -19,6 +20,7 @@ class WorldType:
     RMUL_24 = 'RMUL_24'
     RMUC_25 = 'RMUC_25'
     RMUC_26 = 'RMUC_26'
+    RMUL_26 = 'RMUL_26'
 
 def get_world_config(world_type):
     world_configs = {
@@ -52,6 +54,16 @@ def get_world_config(world_type):
             'z': '0.2',
             'yaw': '0.0',
             'world_path': 'RMUC2026_world/RMUC2026_world.world'
+        }
+        ,
+        WorldType.RMUL_26: {
+            # Spawn pose kept consistent with RMUL_24; adjust to your preferred start.
+            # Left-upper spawn (map-derived) for easier team-side debugging.
+            'x': '-5.375',
+            'y': '3.425',
+            'z': '1.16',
+            'yaw': '-0.567331',
+            'world_path': 'RMUL2026_world/RMUL2026_world.world'
         }
     }
     return world_configs.get(world_type, None)
@@ -103,7 +115,7 @@ def generate_launch_description():
     declare_world_cmd = DeclareLaunchArgument(
         'world',
         default_value=WorldType.RMUC_24,
-        description='Choose <RMUC_24> or <RMUL_24> or <RMUC_25>'
+        description='Choose <RMUC_24> or <RMUL_24> or <RMUC_25> or <RMUC_26> or <RMUL_26>'
     )
 
     declare_gui_cmd = DeclareLaunchArgument(
@@ -168,22 +180,28 @@ def generate_launch_description():
         return GroupAction(
             condition=LaunchConfigurationEquals('world', world_type),
             actions=[
-                Node(
-                    package='gazebo_ros',
-                    executable='spawn_entity.py',
-                    arguments=[
-                        '-entity', 'robot',
-                        '-topic', 'robot_description',
-                        '-x', world_config['x'],
-                        '-y', world_config['y'],
-                        '-z', world_config['z'],
-                        '-Y', world_config['yaw']
-                    ],
-                ),
                 IncludeLaunchDescription(
                     PythonLaunchDescriptionSource(os.path.join(pkg_gazebo_ros, 'launch', 'gzserver.launch.py')),
                     launch_arguments={'world': os.path.join(bringup_dir, 'world', world_config['world_path'])}.items(),
                 )
+                ,
+                TimerAction(
+                    period=2.0,
+                    actions=[
+                        Node(
+                            package='gazebo_ros',
+                            executable='spawn_entity.py',
+                            arguments=[
+                                '-entity', 'robot',
+                                '-topic', 'robot_description',
+                                '-x', world_config['x'],
+                                '-y', world_config['y'],
+                                '-z', world_config['z'],
+                                '-Y', world_config['yaw']
+                            ],
+                        )
+                    ]
+                ),
             ]
         )
 
@@ -191,6 +209,7 @@ def generate_launch_description():
     bringup_RMUL_24_cmd_group = create_gazebo_launch_group(WorldType.RMUL_24)
     bringup_RMUC_25_cmd_group = create_gazebo_launch_group(WorldType.RMUC_25)
     bringup_RMUC_26_cmd_group = create_gazebo_launch_group(WorldType.RMUC_26)
+    bringup_RMUL_26_cmd_group = create_gazebo_launch_group(WorldType.RMUL_26)
 
     # Create the launch description and populate
     ld = LaunchDescription()
@@ -212,6 +231,7 @@ def generate_launch_description():
     ld.add_action(bringup_RMUC_24_cmd_group) # type: ignore
     ld.add_action(bringup_RMUC_25_cmd_group) # type: ignore
     ld.add_action(bringup_RMUC_26_cmd_group) # type: ignore
+    ld.add_action(bringup_RMUL_26_cmd_group) # type: ignore
 
     # Uncomment this line if you want to start RViz
     ld.add_action(start_rviz_cmd)

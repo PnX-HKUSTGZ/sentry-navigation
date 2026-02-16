@@ -242,3 +242,115 @@ export SENTRY_EVAL_MAX_SAMPLES=1000        # 最大监控采样数 (默认 1000)
 - `src/rm_nav_bringup/evaluation/README.md`: Evaluation 模块使用说明与输出格式
 - `SYSTEM_FILE_ROLES.md`: 系统文件职责与 evaluation 数据流（包含轨迹提取逻辑概览）
 
+
+---
+
+## 4. RMUL2026 Headless 仿真 + AMCL + Nav2 跑通 (2026-02-16)
+
+目标：在无 GUI 的服务器上，使用 Gazebo Classic + AMCL + Nav2（不启动 RViz）让机器人在 RMUL2026 地图中完成定位并执行导航动作。
+
+### 4.1 关键症状
+- Nav2 costmap/controller 反复报错：`Timed out waiting for transform ... base_link_fake to map ... frame map does not exist`
+- TF 树没有 `map` frame（因此 `tf2_echo map odom` / `tf2_echo map base_link_fake` 失败）
+- AMCL 启动但不发布 `map->odom`，并提示需要 initial pose
+
+### 4.2 根因与修复
+
+#### A) 仿真时间基准不一致（/clock 与节点 wall time）
+**现象**：出现大量 `TF_OLD_DATA` / message filter 丢消息，AMCL/代价地图拿不到可用 TF。
+
+**修复**：将仿真参数文件中 Nav2/AMCL/Costmap 等组件的 `use_sim_time` 统一为 `True`。
+
+**修改文件**：
+- `src/rm_nav_bringup/config/simulation/nav2_params.yaml`
+
+#### B) AMCL 未收到有效 initial pose → 不会发布 map->odom
+**现象**：AMCL 提示 `Please set the initial pose...`，`map` frame 不会出现。
+
+**修复**：发布 `/initialpose`（frame_id 必须是 `map`），并确保时间戳来自仿真 `/clock`（非 0）。
+
+推荐用 rclpy 发布（确保 stamp != 0）：
+```bash
+cd /data/home/sim6g/sentry/sentry-navigation
+export PATH=$(echo "$PATH" | tr ':' '\n' | grep -v -E 'anaconda3|conda|mambaforge|miniconda' | paste -sd: -)
+unset CONDA_PREFIX CONDA_DEFAULT_ENV PYTHONHOME PYTHONPATH
+export PYTHONNOUSERSITE=1
+. /opt/ros/humble/setup.bash
+. install/setup.bash
+
+python3 - <<'PY'
+import time
+import rclpy
+from rclpy.node import Node
+from rclpy.parameter import Parameter
+from geometry_msgs.msg import PoseWithCovarianceStamped
+
+rclpy.init()
+node = Node('amcl_initialpose_cli')
+node.set_parameters([Parameter('use_sim_time', Parameter.Type.BOOL, True)])
+pub = node.create_publisher(PoseWithCovarianceStamped, '/initialpose', 10)
+
+msg = PoseWithCovarianceStamped()
+msg.header.frame_id = 'map'
+msg.pose.pose.position.x = -5.375
+msg.pose.pose.position.y = 3.425
+msg.pose.pose.orientation.z = -0.2798765
+msg.pose.pose.orientation.w = 0.9600360
+cov = [0.0]*36
+cov[0] = 0.25
+cov[7] = 0.25
+cov[35] = 0.06853891945200942
+msg.pose.covariance = cov
+
+start = time.time()
+while time.time() - start < 5.0:
+        rclpy.spin_once(node, timeout_sec=0.1)
+        if node.get_clock().now().nanoseconds > 0:
+                break
+msg.header.stamp = node.get_clock().now().to_msg()
+
+for _ in range(10):
+        pub.publish(msg)
+        rclpy.spin_once(node, timeout_sec=0.1)
+        time.sleep(0.05)
+
+node.destroy_node()
+rclpy.shutdown()
+PY
+```
+
+验证：
+```bash
+ros2 run tf2_ros tf2_echo map odom
+ros2 topic echo /amcl_pose --once
+```
+
+#### C) ros2cli 偶发 InvalidHandle（action list / action send_goal 前置调用时）
+**现象**：`ros2 action list` 报 `InvalidHandle: cannot use Destroyable because destruction was requested`。
+
+**修复**：在发送 action goal 前先停掉 daemon：
+```bash
+ros2 daemon stop
+```
+
+### 4.3 Headless 通过 /navigate_through_poses 跑折线
+```bash
+ros2 daemon stop >/dev/null 2>&1 || true
+ros2 action send_goal /navigate_through_poses nav2_msgs/action/NavigateThroughPoses \
+"{poses: [
+    {header: {frame_id: map}, pose: {position: {x: -4.80, y: 3.15, z: 0.0}, orientation: {x: 0.0, y: 0.0, z: 0.0, w: 1.0}}},
+    {header: {frame_id: map}, pose: {position: {x: -4.20, y: 3.15, z: 0.0}, orientation: {x: 0.0, y: 0.0, z: 0.0, w: 1.0}}},
+    {header: {frame_id: map}, pose: {position: {x: -4.20, y: 2.55, z: 0.0}, orientation: {x: 0.0, y: 0.0, z: 0.0, w: 1.0}}},
+    {header: {frame_id: map}, pose: {position: {x: -4.90, y: 2.55, z: 0.0}, orientation: {x: 0.0, y: 0.0, z: 0.0, w: 1.0}}}
+]}" \
+--feedback
+```
+
+### 4.4 相关修改文件（本次会话）
+- `src/rm_nav_bringup/config/simulation/nav2_params.yaml`: 统一 use_sim_time
+- `src/rm_simulation/pb_rm_simulation/launch/rm_simulation.launch.py`: gzserver/spawn 时序稳定性（以及 RMUL2026 spawn pose）
+- `src/rm_nav_bringup/config/launch_params.yaml`: 默认 controller 切到 dwb
+- `src/rm_nav_bringup/urdf/sentry_robot_sim.xacro`: publish_odom_tf 打开
+- `src/rm_localization/small_gicp_registration/CMakeLists.txt`: include 路径修复
+- `src/rm_driver/livox_ros_driver2/src/CMakeLists.txt`: Livox SDK2 可选化（submodule 内）
+

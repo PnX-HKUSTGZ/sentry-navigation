@@ -221,7 +221,7 @@
 
       <!-- Set if odom required -->
       <publish_odom>true</publish_odom>
-      <publish_odom_tf>false</publish_odom_tf>
+      <publish_odom_tf>true</publish_odom_tf>
 
       <!-- Frame IDs -->
       <odometry_frame>odom</odometry_frame>

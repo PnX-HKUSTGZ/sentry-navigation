@@ -15,8 +15,8 @@ find_package(ament_cmake_auto REQUIRED)
 find_package(PCL REQUIRED QUIET)
 find_package(Eigen3 REQUIRED)
 
-# 添加small_gicp头文件路径
-set(SMALL_GICP_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../../../small_gicp/include)
+# 添加small_gicp头文件路径（small_gicp 位于 sentry-navigation/small_gicp）
+set(SMALL_GICP_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../../small_gicp/include)
 
 ament_auto_find_build_dependencies()
 
