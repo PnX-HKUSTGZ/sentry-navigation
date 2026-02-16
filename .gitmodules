@@ -6,10 +6,13 @@
 	url = https://github.com/rst-tu-dortmund/teb_local_planner.git
 [submodule "src/rm_navigation/costmap_converter"]
 	path = src/rm_navigation/costmap_converter
-	url = https://github.com/LihanChen2004/costmap_converter.git
+	url = https://github.com/rst-tu-dortmund/costmap_converter.git
 [submodule "src/rm_localization/FAST_LIO"]
 	path = src/rm_localization/FAST_LIO
 	url = https://github.com/LihanChen2004/FAST_LIO.git
 [submodule "src/rm_localization/point_lio"]
 	path = src/rm_localization/point_lio
 	url = https://github.com/LihanChen2004/Point-LIO.git
+[submodule "small_gicp"]
+	path = small_gicp
+	url = https://github.com/koide3/small_gicp.git
