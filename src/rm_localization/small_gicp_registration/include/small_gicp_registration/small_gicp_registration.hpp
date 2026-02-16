@@ -20,6 +20,8 @@
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 #include <pcl_conversions/pcl_conversions.h>
+// Eigen
+#include <Eigen/Geometry>
 
 // small_gicp
 #include <small_gicp/registration/registration_helper.hpp>
@@ -91,6 +93,8 @@ private:
       const std::string& child_frame_id,
       const rclcpp::Time& stamp);
 
+    static Eigen::Isometry3d transformStampedToEigen(const geometry_msgs::msg::TransformStamped& transform);
+
   // ROS2 interfaces
   rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr
       initial_pose_sub_;
@@ -138,6 +142,10 @@ private:
   
   // Initial pose
   geometry_msgs::msg::Pose initial_pose_;
+
+    // Cache /initialpose if it arrives before the first scan.
+    geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr pending_initialpose_;
+    bool has_pending_initialpose_{false};
   
   // Status flags
   bool is_initialized_;

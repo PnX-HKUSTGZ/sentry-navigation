@@ -2,6 +2,7 @@
 #include <pcl/io/pcd_io.h>
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2/utils.h>
+#include <rclcpp/qos.hpp>
 
 namespace small_gicp_localization {
 
@@ -88,13 +89,30 @@ SmallGicpNode::SmallGicpNode(const rclcpp::NodeOptions &options)
   }
 
   // 创建订阅者
-  pointcloud_sub_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
-      pointcloud_topic_, 10,
+    auto sensor_qos = rclcpp::SensorDataQoS();
+    pointcloud_sub_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
+      pointcloud_topic_, sensor_qos,
       std::bind(&SmallGicpNode::pointcloudCallback, this, std::placeholders::_1));
 
-  initial_pose_sub_ = this->create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
-      "/initialpose", 10,
+    initial_pose_sub_ = this->create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
+      "/initialpose",
+      rclcpp::QoS(rclcpp::KeepLast(1)).reliable().durability_volatile(),
       std::bind(&SmallGicpNode::initialPoseCallback, this, std::placeholders::_1));
+
+    // Continuously publish the latest map->odom TF so downstream nodes can query at "now".
+    tf_publisher_thread_ = std::make_unique<std::thread>([this]() {
+      rclcpp::Rate rate(100);
+      while (rclcpp::ok()) {
+        {
+          std::lock_guard<std::mutex> lock(mutex_);
+          if (is_initialized_ && map_to_odom_.header.frame_id == map_frame_id_ && map_to_odom_.child_frame_id == odom_frame_id_) {
+            map_to_odom_.header.stamp = this->now();
+            tf_broadcaster_->sendTransform(map_to_odom_);
+          }
+        }
+        rate.sleep();
+      }
+    });
 
   RCLCPP_INFO(this->get_logger(), "Small GICP localization node initialized successfully");
   RCLCPP_INFO(this->get_logger(), "  Map file: %s", pcd_path_.c_str());
@@ -103,7 +121,11 @@ SmallGicpNode::SmallGicpNode(const rclcpp::NodeOptions &options)
   RCLCPP_INFO(this->get_logger(), "  Number of threads: %d", num_threads_);
 }
 
-SmallGicpNode::~SmallGicpNode() = default;
+SmallGicpNode::~SmallGicpNode() {
+  if (tf_publisher_thread_ && tf_publisher_thread_->joinable()) {
+    tf_publisher_thread_->join();
+  }
+}
 
 bool SmallGicpNode::loadReferenceMap() {
   if (pcd_path_.empty()) {
@@ -152,6 +174,13 @@ void SmallGicpNode::pointcloudCallback(const sensor_msgs::msg::PointCloud2::Shar
     return;
   }
 
+  // Apply cached /initialpose if it arrived before any scan.
+  if (has_pending_initialpose_ && pending_initialpose_) {
+    initialPoseCallback(pending_initialpose_);
+    // initialPoseCallback() will clear the pending flag on success.
+    // If it still fails, fall through and try the default initialization path.
+  }
+
   // 如果是第一帧或者未初始化，使用初始位姿
   if (first_scan_ || !is_initialized_) {
     Eigen::Isometry3d init_guess = Eigen::Isometry3d::Identity();
@@ -178,10 +207,32 @@ void SmallGicpNode::pointcloudCallback(const sensor_msgs::msg::PointCloud2::Shar
       RCLCPP_WARN(this->get_logger(), "Initial localization failed");
     }
   } else {
-    // 使用上一次的变换作为初始猜测
-    // 这里可以结合里程计信息进行预测
+    // 使用上一次的map->odom与当前odom->laser作为初始猜测（提高收敛速度与稳定性）
     Eigen::Isometry3d init_guess = Eigen::Isometry3d::Identity();
-    // TODO: 从当前的map_to_odom_变换中获取初始猜测
+    try {
+      // odom -> laser (in tf2 API: target=laser, source=range_odom)
+      auto odom_to_laser_msg = tf_buffer_->lookupTransform(
+          laser_frame_id_, range_odom_frame_id_, rclcpp::Time(0), rclcpp::Duration::from_seconds(0.2));
+      Eigen::Isometry3d odom_to_laser = transformStampedToEigen(odom_to_laser_msg);
+
+      Eigen::Isometry3d map_to_odom = Eigen::Isometry3d::Identity();
+      {
+        std::lock_guard<std::mutex> lock(mutex_);
+        // Only use the last published transform when it's valid.
+        if (map_to_odom_.header.frame_id == map_frame_id_ && map_to_odom_.child_frame_id == odom_frame_id_) {
+          map_to_odom = transformStampedToEigen(map_to_odom_);
+        }
+      }
+
+      // map -> laser = (map -> odom) * (odom -> laser)
+      // But small_gicp expects a transform that maps source(laser) into target(map): map_from_laser.
+      // map_from_laser = map_from_odom * odom_from_laser
+      Eigen::Isometry3d odom_from_laser = odom_to_laser.inverse();
+      init_guess = map_to_odom * odom_from_laser;
+    } catch (tf2::TransformException &ex) {
+      RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                           "TF lookup failed for init guess: %s", ex.what());
+    }
     
     auto [transform, success] = performRegistration(current_scan_, init_guess);
     
@@ -198,10 +249,24 @@ void SmallGicpNode::initialPoseCallback(
   
   RCLCPP_INFO(this->get_logger(), "Received initial pose, performing relocalization");
 
-  if (!map_loaded_ || !current_scan_) {
-    RCLCPP_WARN(this->get_logger(), "Map not loaded or no scan available for relocalization");
+  if (!map_loaded_) {
+    RCLCPP_WARN(this->get_logger(), "Map not loaded; ignoring /initialpose");
     return;
   }
+
+  // /initialpose may arrive before the first scan (RViz is often faster than sensors).
+  if (!current_scan_ || current_scan_->empty()) {
+    pending_initialpose_ = msg;
+    has_pending_initialpose_ = true;
+    // Also store it as the default initial pose for when the first scan arrives.
+    initial_pose_ = msg->pose.pose;
+    RCLCPP_WARN(this->get_logger(),
+                "Received /initialpose but no scan available yet; caching until first scan arrives");
+    return;
+  }
+
+  // Update the default initial pose for future re-inits.
+  initial_pose_ = msg->pose.pose;
 
   // 构建初始变换
   Eigen::Isometry3d init_guess = Eigen::Isometry3d::Identity();
@@ -222,10 +287,30 @@ void SmallGicpNode::initialPoseCallback(
   if (success) {
     publishTransform(transform);
     is_initialized_ = true;
+    first_scan_ = false;
+    pending_initialpose_.reset();
+    has_pending_initialpose_ = false;
     RCLCPP_INFO(this->get_logger(), "Relocalization successful with score: %.6f", last_registration_score_);
   } else {
     RCLCPP_ERROR(this->get_logger(), "Relocalization failed");
+    // Keep it pending so we can retry on the next scan.
+    pending_initialpose_ = msg;
+    has_pending_initialpose_ = true;
   }
+}
+
+Eigen::Isometry3d SmallGicpNode::transformStampedToEigen(const geometry_msgs::msg::TransformStamped& transform) {
+  Eigen::Isometry3d out = Eigen::Isometry3d::Identity();
+  out.translation() = Eigen::Vector3d(
+      transform.transform.translation.x,
+      transform.transform.translation.y,
+      transform.transform.translation.z);
+  out.linear() = Eigen::Quaterniond(
+      transform.transform.rotation.w,
+      transform.transform.rotation.x,
+      transform.transform.rotation.y,
+      transform.transform.rotation.z).toRotationMatrix();
+  return out;
 }
 
 std::pair<Eigen::Isometry3d, bool> SmallGicpNode::performRegistration(

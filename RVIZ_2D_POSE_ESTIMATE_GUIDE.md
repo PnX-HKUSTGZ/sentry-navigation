@@ -1,9 +1,11 @@
 # RViz 2D 位姿估计指南
-# 用于 ICP 定位初始化
+# 用于 ICP / Small-GICP 定位初始化与重定位
 
 ## 快速说明
 
-当 ICP 定位无法自动发布 TF 变换时，需要手动设置机器人的初始位姿。这告诉 ICP 节点"机器人在这里"，它就能与 PCD 地图进行配准。
+当 ICP 或 Small-GICP 定位无法自动发布 TF 变换时，需要手动设置机器人的初始位姿。这告诉定位节点“机器人在这里”，它就能与 PCD 地图进行配准并发布 map→odom。
+
+说明：系统中 RViz 的 “2D Pose Estimate” 会发布到 `/initialpose`。ICP 与 small_gicp 都会订阅该话题；small_gicp 也支持在第一帧点云到达前收到 `/initialpose`（会缓存并在首帧到来后执行重定位）。
 
 ## 详细步骤
 
@@ -58,7 +60,7 @@ rviz2
 - 箭头方向表示机器人的朝向
 - RViz 会自动将此信息发送到 `/initialpose` 话题
 
-### 4. 等待 ICP 配准
+### 4. 等待 ICP / Small-GICP 配准
 
 - **不要着急移动！** 
 - ICP 需要 5-30 秒来处理点云并进行配准
@@ -95,7 +97,7 @@ ros2 run tf2_ros tf2_monitor
 - **解决**：在工具栏中明确选择 "2D Pose Estimate"（可能标记为 "2D Nav Goal" 或类似名称）
 
 ### Q2: 绿色箭头出现了，但 TF 仍未发布
-- **原因**：ICP 配准失败，可能是：
+- **原因**：ICP / Small-GICP 配准失败，可能是：
   1. 初始位姿离实际位置太远（> 1 米）
   2. 方向偏差过大（> 90 度）
   3. PCD 地图与实际环境不匹配
@@ -135,13 +137,18 @@ ros2 topic echo /tf | grep -A10 'frame_id: "map"'
 # 配准成功后，应该看到 "map" → "odom" 的变换
 ```
 
-### 调整 ICP 搜索参数（如果配准失败）
+### 调整 ICP / Small-GICP 搜索参数（如果配准失败）
 ```bash
 # 增大搜索范围（默认 0.5 米）
 ros2 param set /icp_registration xy_search_range 2.0
 
+# Small-GICP 对应节点名通常是 /small_gicp_registration
+ros2 param set /small_gicp_registration xy_search_range 2.0
+
 # 增大角度搜索范围（默认 30 度）
 ros2 param set /icp_registration yaw_search_range 90.0
+
+ros2 param set /small_gicp_registration yaw_search_range 90.0
 
 # 之后重新使用 2D Pose Estimate
 ```
