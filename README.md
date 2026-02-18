@@ -11,6 +11,9 @@
 > **RMUL_26 联调可复现指南（导航 + 决策）**  
 > 见 `docs/RMUL26_JOINT_REPRO.md`，包含单入口 bringup、AMCL 初始位姿 QoS、决策桩话题、DWB/TEB A/B 命令。
 
+> **RMUL_26 固定版本发布说明（跨仓库 commit pin）**  
+> 见 `docs/RMUL26_REPRO_RELEASE.md`。
+
 ## 一. 项目介绍
 
 本项目使用全向移动小车，附加 Livox Mid360 雷达与 IMU，在 RMUC/RMUL 地图进行导航算法仿真，仅需要调整参数即可移植到真实机器人中导航。
