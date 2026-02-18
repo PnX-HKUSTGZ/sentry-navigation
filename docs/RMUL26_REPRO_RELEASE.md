@@ -6,8 +6,8 @@ This document pins a known-good cross-repo pair for RMUL_26 joint debugging.
 
 ## Pinned commits
 
-- Navigation repo: `b93f3d4f6ed2a5b343b5555d47e102e34aeadcea`
-- Decision repo: `924b5dc19ef7e16646dca32bb3b9e826447cde28`
+- Navigation repo: `3e26b2bf52fb9da17ed5d4ad5549d0f4f4f53494`
+- Decision repo: `bd8f3489fb40e51da7e1f30db0fa143ab158a915`
 
 ## Goals covered
 
