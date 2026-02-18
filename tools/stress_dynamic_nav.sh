@@ -187,6 +187,10 @@ if ! wait_for_action 90; then
   exit 3
 fi
 echo "[INFO] Action server: ${ACTION_NAME}"
+# Some localization nodes (e.g. icp/small_gicp) are launched with delay.
+# Re-publish initialpose here so late subscribers can still receive it.
+echo "[INFO] Re-publish /initialpose for delayed localization nodes"
+publish_initialpose
 if [[ "${STARTUP_SETTLE_SEC}" != "0" ]]; then
   echo "[INFO] Settling ${STARTUP_SETTLE_SEC}s for lifecycle stabilization..."
   sleep "${STARTUP_SETTLE_SEC}"

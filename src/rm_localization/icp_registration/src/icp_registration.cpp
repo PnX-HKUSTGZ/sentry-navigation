@@ -13,6 +13,16 @@
 #include <tf2_ros/create_timer_ros.h>
 
 namespace icp {
+namespace {
+bool hasPointField(const sensor_msgs::msg::PointCloud2& msg, const char* field_name) {
+  for (const auto& field : msg.fields) {
+    if (field.name == field_name) {
+      return true;
+    }
+  }
+  return false;
+}
+}  // namespace
 
 IcpNode::IcpNode(const rclcpp::NodeOptions &options)
     : Node("icp_registration", options), rough_iter_(10), refine_iter_(5),
@@ -102,7 +112,8 @@ IcpNode::IcpNode(const rclcpp::NodeOptions &options)
   initial_pose_sub_ =
       create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
           "/initialpose",
-          rclcpp::QoS(rclcpp::KeepLast(1)).reliable().durability_volatile(),
+          // Keep QoS compatible with simulation tooling (BEST_EFFORT + VOLATILE).
+          rclcpp::QoS(rclcpp::KeepLast(1)).best_effort().durability_volatile(),
           [this](geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg) {
             initialPoseCallback(msg);
           });
@@ -157,7 +168,29 @@ IcpNode::~IcpNode() {
 
 void IcpNode::pointcloudCallback(
     const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
-  pcl::fromROSMsg(*msg, *cloud_in_);
+  if (hasPointField(*msg, "intensity")) {
+    pcl::fromROSMsg(*msg, *cloud_in_);
+  } else {
+    // Simulation pointcloud may not include intensity; synthesize intensity=0.
+    pcl::PointCloud<pcl::PointXYZ> cloud_xyz;
+    pcl::fromROSMsg(*msg, cloud_xyz);
+    cloud_in_->clear();
+    cloud_in_->reserve(cloud_xyz.size());
+    for (const auto& pt : cloud_xyz.points) {
+      pcl::PointXYZI out{};
+      out.x = pt.x;
+      out.y = pt.y;
+      out.z = pt.z;
+      out.intensity = 0.0f;
+      cloud_in_->push_back(out);
+    }
+    cloud_in_->width = cloud_xyz.width;
+    cloud_in_->height = cloud_xyz.height;
+    cloud_in_->is_dense = cloud_xyz.is_dense;
+    RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 3000,
+                         "Pointcloud has no intensity field; using intensity=0 fallback.");
+  }
+
   if (first_scan_) {
     // Prefer an externally provided /initialpose if it arrived before the first scan.
     if (has_pending_initialpose_ && pending_initialpose_) {
@@ -318,10 +351,11 @@ Eigen::Matrix4d IcpNode::multiAlignSync(PointCloudXYZI::Ptr source,
 
   for (int i = -1; i <= 1; i++) {
     for (int j = -1; j <= 1; j++) {
-      for (int k = -yaw_offset_; k <= yaw_offset_; k++) {
+      for (double yaw_delta = -yaw_offset_; yaw_delta <= yaw_offset_ + 1e-9;
+           yaw_delta += yaw_resolution_) {
         Eigen::Vector3f pos(xyz(0) + i * xy_offset_, xyz(1) + j * xy_offset_,
                             xyz(2));
-        Eigen::AngleAxisf yawAngle(rpy(2) + k * yaw_resolution_,
+        Eigen::AngleAxisf yawAngle(rpy(2) + yaw_delta,
                                    Eigen::Vector3f::UnitZ());
         temp_pose.setIdentity();
         temp_pose.block<3, 3>(0, 0) =
