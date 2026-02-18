@@ -34,6 +34,12 @@ def _launch_setup(context, *args, **kwargs):
     if localization_override:
         os.environ['RM_NAV_LOCALIZATION'] = localization_override
 
+    controller_override = LaunchConfiguration('controller').perform(context).strip()
+    if controller_override:
+        os.environ['RM_NAV_CONTROLLER'] = controller_override
+
+    nav_start_delay_override = LaunchConfiguration('nav_start_delay').perform(context).strip()
+
     # 从 common 模块导入所有必要的变量和节点定义（导入时会读取 RM_NAV_MAP / RM_NAV_LOCALIZATION 覆盖）
     from common import (
         mode,
@@ -159,7 +165,22 @@ def _launch_setup(context, *args, **kwargs):
 
     # 7. 导航系统
     print("7. 启动Navigation2导航系统...")
-    actions.append(start_navigation2)
+    if nav_start_delay_override:
+        try:
+            nav_start_delay = float(nav_start_delay_override)
+        except ValueError as exc:
+            raise ValueError(
+                f"Invalid nav_start_delay: '{nav_start_delay_override}'. Must be a float in seconds."
+            ) from exc
+    else:
+        # 仿真场景中 Gazebo 与机器人 spawn 通常慢于 Nav2，短延迟可避免 bt_navigator 配置超时。
+        nav_start_delay = 8.0 if use_sim else 0.0
+
+    if nav_start_delay > 0.0:
+        print(f"   Navigation2 将在 {nav_start_delay:.1f}s 后启动（等待仿真/TF稳定）...")
+        actions.append(TimerAction(period=nav_start_delay, actions=[start_navigation2]))
+    else:
+        actions.append(start_navigation2)
 
     print("哨兵导航系统启动完成！")
     return actions
@@ -184,12 +205,28 @@ def generate_launch_description():
         )
     )
 
+    ld.add_action(
+        DeclareLaunchArgument(
+            'controller',
+            default_value='',
+            description='Local controller override: teb|dwb. If empty, uses config/launch_params.yaml.'
+        )
+    )
+
     # 允许在命令行覆盖：ros2 launch rm_nav_bringup bringup.launch.py nav_rviz:=false
     ld.add_action(
         DeclareLaunchArgument(
             'nav_rviz',
             default_value='true',
             description='Whether to launch Navigation2 RViz (rm_navigation/rviz_launch.py)'
+        )
+    )
+
+    ld.add_action(
+        DeclareLaunchArgument(
+            'nav_start_delay',
+            default_value='',
+            description='Delay Navigation2 startup in seconds. Empty uses auto policy (sim=8.0, real=0.0).'
         )
     )
 

@@ -1,0 +1,23 @@
+name: sentry-rs-humble
+channels:
+  - conda-forge
+  - robostack-humble
+dependencies:
+  - python=3.10
+  - pip
+  - git
+  - cmake
+  - make
+  - ninja
+  - pkg-config
+  - compilers
+  - colcon-common-extensions
+  - vcstool
+  - rosdep
+  - ros-humble-desktop
+  - ros-humble-navigation2
+  - ros-humble-nav2-bringup
+  - ros-humble-slam-toolbox
+  - ros-humble-gazebo-ros-pkgs
+  - ros-humble-foxglove-bridge
+

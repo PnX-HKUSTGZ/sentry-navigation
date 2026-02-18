@@ -2,6 +2,8 @@ devel/
 build/
 install/
 log/
+artifacts/
+.conda/
 
 .vscode/
 .cache/
@@ -15,4 +17,3 @@ mat_out.txt
 imu.txt
 dbg.txt
 pos_log.txt
-

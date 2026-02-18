@@ -53,7 +53,8 @@ mode = launch_params.get("mode", "nav")  # 获取运行模式 (mapping/nav)，�
 lio = launch_params.get("lio", "fastlio")  # 激光雷达惯性里程计 (pointlio/fastlio)，默认为fastlio
 _env_localization = os.environ.get("RM_NAV_LOCALIZATION", "").strip()
 localization = _env_localization if _env_localization else launch_params.get("localization", "slam_toolbox")  # 获取定位模式 (amcl/slam_toolbox/icp)
-controller = launch_params.get("controller", "teb")  # 局部控制器 (teb/dwb)
+_env_controller = os.environ.get("RM_NAV_CONTROLLER", "").strip()
+controller = _env_controller if _env_controller else launch_params.get("controller", "teb")  # 局部控制器 (teb/dwb)
 use_sim = launch_params.get("use_sim", False)  # 是否使用仿真，默认为False
 use_sim_time = LaunchConfiguration(
     'use_sim_time',
@@ -452,5 +453,4 @@ else:
         output="screen",
         parameters=[livox_ros_driver2_params_dir, {"user_config_path": user_config_path}],
     )
-
 

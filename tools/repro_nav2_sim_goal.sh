@@ -10,6 +10,8 @@ GOAL_X="${1:-3.85}"
 GOAL_Y="${2:--3.65}"
 GOAL_QZ="${3:-0.0}"
 GOAL_QW="${4:-1.0}"
+CONTROLLER="${CONTROLLER:-}"
+STARTUP_SETTLE_SEC="${STARTUP_SETTLE_SEC:-3}"
 
 # RMUL_26 default spawn pose (from pb_rm_simulation)
 INIT_X="${INIT_X:--5.375}"
@@ -29,7 +31,11 @@ fi
 
 echo "[1/5] Launch bringup (AMCL, no RViz)"
 # Run in background; keep stdout/stderr visible in this terminal.
-ros2 launch rm_nav_bringup bringup.launch.py localization:=amcl nav_rviz:=false &
+launch_cmd=(ros2 launch rm_nav_bringup bringup.launch.py localization:=amcl nav_rviz:=false)
+if [[ -n "${CONTROLLER}" ]]; then
+  launch_cmd+=("controller:=${CONTROLLER}")
+fi
+"${launch_cmd[@]}" &
 BRINGUP_PID=$!
 
 cleanup() {
@@ -52,6 +58,11 @@ for i in {1..60}; do
     exit 3
   fi
 done
+
+if [[ "${STARTUP_SETTLE_SEC}" != "0" ]]; then
+  echo "[INFO] Settling ${STARTUP_SETTLE_SEC}s for lifecycle stabilization"
+  sleep "${STARTUP_SETTLE_SEC}"
+fi
 
 # 3) Initialize AMCL (QoS must match AMCL subscription: BEST_EFFORT + VOLATILE)
 # Publish repeatedly for a short burst.

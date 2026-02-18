@@ -94,9 +94,10 @@ SmallGicpNode::SmallGicpNode(const rclcpp::NodeOptions &options)
       pointcloud_topic_, sensor_qos,
       std::bind(&SmallGicpNode::pointcloudCallback, this, std::placeholders::_1));
 
+    // Keep /initialpose QoS compatible with simulation tooling (BEST_EFFORT + VOLATILE).
     initial_pose_sub_ = this->create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
       "/initialpose",
-      rclcpp::QoS(rclcpp::KeepLast(1)).reliable().durability_volatile(),
+      rclcpp::QoS(rclcpp::KeepLast(1)).best_effort().durability_volatile(),
       std::bind(&SmallGicpNode::initialPoseCallback, this, std::placeholders::_1));
 
     // Continuously publish the latest map->odom TF so downstream nodes can query at "now".

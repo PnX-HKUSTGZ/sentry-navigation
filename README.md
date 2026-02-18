@@ -8,6 +8,9 @@
 > - 添加详细的代码注释和使用文档
 > - 优化节点启动顺序和时序控制
 
+> **RMUL_26 联调可复现指南（导航 + 决策）**  
+> 见 `docs/RMUL26_JOINT_REPRO.md`，包含单入口 bringup、AMCL 初始位姿 QoS、决策桩话题、DWB/TEB A/B 命令。
+
 ## 一. 项目介绍
 
 本项目使用全向移动小车，附加 Livox Mid360 雷达与 IMU，在 RMUC/RMUL 地图进行导航算法仿真，仅需要调整参数即可移植到真实机器人中导航。
@@ -48,38 +51,111 @@
 
 ## 二. 环境配置
 
-当前开发环境为 Ubuntu22.04, ROS2 humble, Gazebo Classic 11.10.0
+当前开发环境基线为 Ubuntu22.04, ROS2 humble, Gazebo Classic 11.10.0。  
+从 2026 起推荐使用 **RoboStack（conda）** 管理 ROS 依赖，避免系统 `/opt/ros/humble` 与工作区混装导致的问题。
+
+### 2.1 方案A：RoboStack（推荐，替代系统 ROS2）
+
+#### 2.1.1 快速上手（复制即用）
+
+```bash
+cd sentry-navigation
+
+# 1) 创建/复用 RoboStack 环境并编译
+bash tools/setup_robostack_env.sh
+
+# 2) 激活 RoboStack（每个新终端都要执行）
+source tools/activate_robostack.sh
+
+# 3) 自检环境
+bash tools/check_robostack_env.sh
+
+# 4) 启动导航（防 conda 污染 + FastDDS SHM 处理）
+bash tools/launch_nav_safe.sh
+
+# 5) 启动 Foxglove bridge（可选）
+bash tools/run_foxglove_bridge.sh
+```
+
+如果你需要在当前 shell 中切回系统 ROS2：
+
+```bash
+conda deactivate 2>/dev/null || true
+unset AMENT_PREFIX_PATH COLCON_PREFIX_PATH CMAKE_PREFIX_PATH ROS_PACKAGE_PATH ROS_DISTRO
+source /opt/ros/humble/setup.bash
+```
 
 1. 克隆仓库
 
     ```sh
-    git clone --recursive https://github.com/LihanChen2004/PB_RMSimulation.git
+    git clone --recursive <your_repo_url>/sentry-navigation.git
     ```
 
-2. 安装 [Livox SDK2](https://github.com/Livox-SDK/Livox-SDK2)
+2. 创建 RoboStack 环境并编译工作区
+
+    ```sh
+    cd sentry-navigation
+    bash tools/setup_robostack_env.sh
+    ```
+
+3. 激活 RoboStack 环境（每次新终端都要执行）
+
+    ```sh
+    source tools/activate_robostack.sh
+    ```
+
+4. 启动 Foxglove Bridge（默认 `ws://0.0.0.0:8765`）
+
+    ```sh
+    bash tools/run_foxglove_bridge.sh
+    ```
+
+5. 在 Foxglove 客户端连接
+
+    ```text
+    ws://<机器人IP或本机IP>:8765
+    ```
+
+6. 运行 RoboStack 环境自检
+
+    ```sh
+    bash tools/check_robostack_env.sh
+    ```
+
+7. （可选）加入 `~/.bashrc`，提供快捷命令 `srs`
+
+    ```sh
+    grep -q "robostack_bashrc_snippet.sh" ~/.bashrc || \
+      echo "source $(pwd)/tools/robostack_bashrc_snippet.sh" >> ~/.bashrc
+    ```
+
+注意:
+- 使用 RoboStack 时，不要再 `source /opt/ros/humble/setup.bash`。
+- `tools/activate_robostack.sh` 会自动 source conda ROS 和本工作区 overlay。
+- 若你需要让 Foxglove 在局域网访问，保留默认 `FOXGLOVE_ADDRESS=0.0.0.0` 即可。
+- 若处于离线/受限网络，可尝试 `ROBOSTACK_OFFLINE=1 RUN_ROSDEP=0 RUN_COLCON_BUILD=0 bash tools/setup_robostack_env.sh`（要求本地 conda 缓存已包含依赖）。
+- 启用自动激活（可选）：在 `~/.bashrc` 里加 `export AUTO_SENTRY_RS=1`，进入工作区目录时会自动执行 `srs`。
+
+### 2.2 方案B：系统 ROS2（兼容旧流程）
+
+1. 安装 [Livox SDK2](https://github.com/Livox-SDK/Livox-SDK2)
 
     ```sh
     sudo apt install cmake
-    ```
-
-    ```sh
     git clone https://github.com/Livox-SDK/Livox-SDK2.git
-    cd ./Livox-SDK2/
-    mkdir build
-    cd build
+    cd Livox-SDK2
+    mkdir build && cd build
     cmake .. && make -j
     sudo make install
     ```
 
-3. 安装依赖
+2. 安装依赖（系统 ROS2）
 
     ```sh
-    cd pb_rmsimulation
-
     rosdep install -r --from-paths src --ignore-src --rosdistro $ROS_DISTRO -y
     ```
 
-4. 编译
+3. 编译
 
     ```sh
     colcon build --symlink-install
@@ -165,6 +241,16 @@ ros2 launch rm_nav_bringup bringup.launch.py
 # 命令行选择地图（覆盖 launch_params.yaml 的 world）
 # 例如选择新增 RMUL2026：
 ros2 launch rm_nav_bringup bringup.launch.py map:=RMUL2026 nav_rviz:=false
+```
+
+推荐在本机开发环境使用防污染启动脚本（自动处理 conda Python 污染 + FastDDS SHM）：
+
+```bash
+# 先做一次环境预检查（不启动）
+DRY_RUN=1 bash tools/launch_nav_safe.sh
+
+# 正式启动
+bash tools/launch_nav_safe.sh
 ```
 
 ### 3.2 配置参数详解
