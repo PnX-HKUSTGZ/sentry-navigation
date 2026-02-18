@@ -1,7 +1,7 @@
 /small_gicp_registration:
   ros__parameters:
     use_sim_time: true
-    # Match ICP input topic in simulation to keep localization data path consistent.
+    # Use simulation Mid360 pointcloud directly.
     pointcloud_topic: "/livox/lidar/pointcloud"
     pcd_path: ""
     map_frame_id: "map"
@@ -13,8 +13,9 @@
     num_threads: 4
     convergence_threshold: 0.01
     max_iterations: 10
+    tf_future_tolerance: 0.2
     xy_search_range: 0.0
     yaw_search_range: 0.0
     xy_step: 0.1
     yaw_step: 10.0
-    initial_pose: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    initial_pose: [-5.0, 3.0, 0.0, 0.0, 0.0, 0.0]

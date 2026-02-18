@@ -18,7 +18,10 @@ DRY_RUN="${DRY_RUN:-0}"
 USE_ROBOSTACK="${USE_ROBOSTACK:-0}"
 ACTION_NAME="${ACTION_NAME:-}"
 CONTROLLER="${CONTROLLER:-}"
+NAV_START_DELAY="${NAV_START_DELAY:-}"
 STARTUP_SETTLE_SEC="${STARTUP_SETTLE_SEC:-3}"
+ACTION_WAIT_TIMEOUT="${ACTION_WAIT_TIMEOUT:-90}"
+MAP_TF_WAIT_TIMEOUT="${MAP_TF_WAIT_TIMEOUT:-45}"
 
 INIT_X="${INIT_X:--5.0}"
 INIT_Y="${INIT_Y:-3.0}"
@@ -48,6 +51,9 @@ if [[ "${DRY_RUN}" == "1" ]]; then
   echo "  use_robostack=${USE_ROBOSTACK}"
   echo "  localization=${LOCALIZATION}"
   echo "  controller=${CONTROLLER:-<default>}"
+  echo "  nav_start_delay=${NAV_START_DELAY:-<auto>}"
+  echo "  action_wait_timeout=${ACTION_WAIT_TIMEOUT}s"
+  echo "  map_tf_wait_timeout=${MAP_TF_WAIT_TIMEOUT}s"
   echo "  nav_rviz=${NAV_RVIZ}"
   echo "  init_pose=(${INIT_X}, ${INIT_Y}, ${INIT_QZ}, ${INIT_QW})"
   echo "  waypoints=${WAYPOINTS}"
@@ -152,8 +158,27 @@ wait_for_amcl_pose() {
   return 1
 }
 
+wait_for_map_tf() {
+  local timeout_s="$1"
+  local loops=$((timeout_s * 2))
+  local i
+  for ((i = 1; i <= loops; i++)); do
+    if timeout 1 ros2 topic echo /tf --once 2>/dev/null | grep -q "frame_id: map"; then
+      return 0
+    fi
+    sleep 0.5
+  done
+  return 1
+}
+
 publish_initialpose() {
   timeout 4 ros2 topic pub --rate 5 /initialpose geometry_msgs/msg/PoseWithCovarianceStamped \
+    "{header: {frame_id: 'map', stamp: {sec: 0, nanosec: 0}}, pose: {pose: {position: {x: ${INIT_X}, y: ${INIT_Y}, z: 0.0}, orientation: {x: 0.0, y: 0.0, z: ${INIT_QZ}, w: ${INIT_QW}}}}}" \
+    --qos-reliability best_effort --qos-durability volatile >/dev/null 2>&1 || true
+}
+
+publish_initialpose_once() {
+  timeout 3 ros2 topic pub --once /initialpose geometry_msgs/msg/PoseWithCovarianceStamped \
     "{header: {frame_id: 'map', stamp: {sec: 0, nanosec: 0}}, pose: {pose: {position: {x: ${INIT_X}, y: ${INIT_Y}, z: 0.0}, orientation: {x: 0.0, y: 0.0, z: ${INIT_QZ}, w: ${INIT_QW}}}}}" \
     --qos-reliability best_effort --qos-durability volatile >/dev/null 2>&1 || true
 }
@@ -169,6 +194,9 @@ if [[ "${LAUNCH_BRINGUP}" == "1" ]]; then
   if [[ -n "${CONTROLLER}" ]]; then
     launch_cmd+=("controller:=${CONTROLLER}")
   fi
+  if [[ -n "${NAV_START_DELAY}" ]]; then
+    launch_cmd+=("nav_start_delay:=${NAV_START_DELAY}")
+  fi
   "${launch_cmd[@]}" > "${ARTIFACT_DIR}/bringup.log" 2>&1 &
   BRINGUP_PID=$!
 fi
@@ -182,18 +210,37 @@ else
 fi
 
 echo "[3/5] Wait for /navigate_to_pose action server"
-if ! wait_for_action 90; then
-  echo "[ERROR] /navigate_to_pose not available" >&2
-  exit 3
+if ! wait_for_action "${ACTION_WAIT_TIMEOUT}"; then
+  if [[ "${LOCALIZATION}" == "icp" || "${LOCALIZATION}" == "small_gicp" ]]; then
+    echo "[WARN] Action server not ready; re-publish /initialpose burst and retry..." >&2
+    publish_initialpose
+    if ! wait_for_action 60; then
+      echo "[ERROR] /navigate_to_pose not available after initialpose retry" >&2
+      exit 3
+    fi
+  else
+    echo "[ERROR] /navigate_to_pose not available" >&2
+    exit 3
+  fi
 fi
 echo "[INFO] Action server: ${ACTION_NAME}"
 # Some localization nodes (e.g. icp/small_gicp) are launched with delay.
-# Re-publish initialpose here so late subscribers can still receive it.
-echo "[INFO] Re-publish /initialpose for delayed localization nodes"
-publish_initialpose
+# Re-publish here so delayed subscribers can still receive it.
+if [[ "${LOCALIZATION}" == "icp" || "${LOCALIZATION}" == "small_gicp" ]]; then
+  echo "[INFO] Re-publish /initialpose once for delayed localization nodes"
+  publish_initialpose_once
+fi
 if [[ "${STARTUP_SETTLE_SEC}" != "0" ]]; then
   echo "[INFO] Settling ${STARTUP_SETTLE_SEC}s for lifecycle stabilization..."
   sleep "${STARTUP_SETTLE_SEC}"
+fi
+if [[ "${LOCALIZATION}" == "icp" || "${LOCALIZATION}" == "small_gicp" ]]; then
+  echo "[INFO] Wait for map TF (frame_id=map), timeout=${MAP_TF_WAIT_TIMEOUT}s"
+  if wait_for_map_tf "${MAP_TF_WAIT_TIMEOUT}"; then
+    echo "[INFO] map TF detected."
+  else
+    echo "[WARN] map TF not detected before timeout; continuing to send goals." >&2
+  fi
 fi
 
 IFS=';' read -r -a WAYPOINT_ARRAY <<< "${WAYPOINTS}"

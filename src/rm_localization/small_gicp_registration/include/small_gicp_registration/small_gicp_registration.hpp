@@ -71,18 +71,23 @@ private:
    */
   std::pair<Eigen::Isometry3d, bool> performRegistration(
       const PointCloudPtr& source,
-      const Eigen::Isometry3d& init_guess);
+      const Eigen::Isometry3d& init_guess,
+      double xy_search_range,
+      double yaw_search_range);
 
   /**
    * @brief Generate multiple candidate poses around initial guess
    */
   std::vector<Eigen::Isometry3d> generateCandidatePoses(
-      const Eigen::Isometry3d& init_guess);
+      const Eigen::Isometry3d& init_guess,
+      double xy_search_range,
+      double yaw_search_range);
 
   /**
    * @brief Publish transformation as TF
    */
   void publishTransform(const Eigen::Isometry3d& transform);
+  void publishPredictedTransformFromOdom();
 
   /**
    * @brief Convert Eigen transform to geometry_msgs transform
@@ -118,6 +123,8 @@ private:
   
   // Transform data
   geometry_msgs::msg::TransformStamped map_to_odom_;
+  Eigen::Isometry3d last_map_to_laser_{Eigen::Isometry3d::Identity()};
+  bool has_last_map_to_laser_{false};
   
   // Configuration parameters
   std::filesystem::path pcd_path_;
@@ -133,6 +140,7 @@ private:
   int num_threads_;
   double convergence_threshold_;
   int max_iterations_;
+  double tf_future_tolerance_;
   
   // Multi-candidate search parameters
   double xy_search_range_;

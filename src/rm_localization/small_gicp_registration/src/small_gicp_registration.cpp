@@ -1,10 +1,24 @@
 #include "small_gicp_registration/small_gicp_registration.hpp"
+#include <algorithm>
 #include <pcl/io/pcd_io.h>
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2/utils.h>
 #include <rclcpp/qos.hpp>
 
 namespace small_gicp_localization {
+namespace {
+bool hasPointField(const sensor_msgs::msg::PointCloud2& msg, const char* field_name) {
+  for (const auto& field : msg.fields) {
+    if (field.name == field_name) {
+      return true;
+    }
+  }
+  return false;
+}
+
+constexpr double kInitRecoveryXYSearchMin = 0.1;                 // meters
+constexpr double kInitRecoveryYawSearchMin = 10.0 * M_PI / 180.0;  // radians
+}  // namespace
 
 SmallGicpNode::SmallGicpNode(const rclcpp::NodeOptions &options)
     : Node("small_gicp_registration", options),
@@ -27,6 +41,7 @@ SmallGicpNode::SmallGicpNode(const rclcpp::NodeOptions &options)
   this->declare_parameter("num_threads", 4);
   this->declare_parameter("convergence_threshold", 0.01);
   this->declare_parameter("max_iterations", 30);
+  this->declare_parameter("tf_future_tolerance", 0.2);
   
   // 多候选搜索参数
   this->declare_parameter("xy_search_range", 0.5);
@@ -50,6 +65,7 @@ SmallGicpNode::SmallGicpNode(const rclcpp::NodeOptions &options)
   num_threads_ = this->get_parameter("num_threads").as_int();
   convergence_threshold_ = this->get_parameter("convergence_threshold").as_double();
   max_iterations_ = this->get_parameter("max_iterations").as_int();
+  tf_future_tolerance_ = this->get_parameter("tf_future_tolerance").as_double();
   
   xy_search_range_ = this->get_parameter("xy_search_range").as_double();
   yaw_search_range_ = this->get_parameter("yaw_search_range").as_double() * M_PI / 180.0;
@@ -107,7 +123,7 @@ SmallGicpNode::SmallGicpNode(const rclcpp::NodeOptions &options)
         {
           std::lock_guard<std::mutex> lock(mutex_);
           if (is_initialized_ && map_to_odom_.header.frame_id == map_frame_id_ && map_to_odom_.child_frame_id == odom_frame_id_) {
-            map_to_odom_.header.stamp = this->now();
+            map_to_odom_.header.stamp = this->now() + rclcpp::Duration::from_seconds(tf_future_tolerance_);
             tf_broadcaster_->sendTransform(map_to_odom_);
           }
         }
@@ -168,18 +184,41 @@ void SmallGicpNode::pointcloudCallback(const sensor_msgs::msg::PointCloud2::Shar
 
   // 转换点云格式
   current_scan_ = std::make_shared<PointCloud>();
-  pcl::fromROSMsg(*msg, *current_scan_);
+  if (hasPointField(*msg, "intensity")) {
+    pcl::fromROSMsg(*msg, *current_scan_);
+  } else {
+    // Simulation pointcloud may not include intensity; synthesize intensity=0.
+    pcl::PointCloud<pcl::PointXYZ> cloud_xyz;
+    pcl::fromROSMsg(*msg, cloud_xyz);
+    current_scan_->clear();
+    current_scan_->reserve(cloud_xyz.size());
+    for (const auto& pt : cloud_xyz.points) {
+      PointType out{};
+      out.x = pt.x;
+      out.y = pt.y;
+      out.z = pt.z;
+      out.intensity = 0.0f;
+      current_scan_->push_back(out);
+    }
+    current_scan_->width = cloud_xyz.width;
+    current_scan_->height = cloud_xyz.height;
+    current_scan_->is_dense = cloud_xyz.is_dense;
+    RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 3000,
+                         "Pointcloud has no intensity field; using intensity=0 fallback.");
+  }
 
   if (current_scan_->empty()) {
     RCLCPP_WARN(this->get_logger(), "Received empty point cloud");
     return;
   }
 
-  // Apply cached /initialpose if it arrived before any scan.
+  // Apply cached /initialpose once when the first valid scan becomes available.
+  // Clear pending flags up front to avoid relocalization loops on repeated failures.
   if (has_pending_initialpose_ && pending_initialpose_) {
-    initialPoseCallback(pending_initialpose_);
-    // initialPoseCallback() will clear the pending flag on success.
-    // If it still fails, fall through and try the default initialization path.
+    auto pending_msg = pending_initialpose_;
+    pending_initialpose_.reset();
+    has_pending_initialpose_ = false;
+    initialPoseCallback(pending_msg);
   }
 
   // 如果是第一帧或者未初始化，使用初始位姿
@@ -197,7 +236,10 @@ void SmallGicpNode::pointcloudCallback(const sensor_msgs::msg::PointCloud2::Shar
         initial_pose_.orientation.z
     ).toRotationMatrix();
 
-    auto [transform, success] = performRegistration(current_scan_, init_guess);
+    const double init_xy_search = std::max(xy_search_range_, kInitRecoveryXYSearchMin);
+    const double init_yaw_search = std::max(yaw_search_range_, kInitRecoveryYawSearchMin);
+    auto [transform, success] = performRegistration(
+        current_scan_, init_guess, init_xy_search, init_yaw_search);
     
     if (success) {
       publishTransform(transform);
@@ -205,7 +247,11 @@ void SmallGicpNode::pointcloudCallback(const sensor_msgs::msg::PointCloud2::Shar
       first_scan_ = false;
       RCLCPP_INFO(this->get_logger(), "Initial localization successful");
     } else {
-      RCLCPP_WARN(this->get_logger(), "Initial localization failed");
+      RCLCPP_WARN(this->get_logger(),
+                  "Initial localization failed; bootstrap map->odom from prior pose");
+      publishTransform(init_guess);
+      is_initialized_ = true;
+      first_scan_ = false;
     }
   } else {
     // 使用上一次的map->odom与当前odom->laser作为初始猜测（提高收敛速度与稳定性）
@@ -235,12 +281,14 @@ void SmallGicpNode::pointcloudCallback(const sensor_msgs::msg::PointCloud2::Shar
                            "TF lookup failed for init guess: %s", ex.what());
     }
     
-    auto [transform, success] = performRegistration(current_scan_, init_guess);
+    auto [transform, success] = performRegistration(
+        current_scan_, init_guess, xy_search_range_, yaw_search_range_);
     
     if (success) {
       publishTransform(transform);
     } else {
       RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000, "Registration failed");
+      publishPredictedTransformFromOdom();
     }
   }
 }
@@ -283,7 +331,10 @@ void SmallGicpNode::initialPoseCallback(
       msg->pose.pose.orientation.z
   ).toRotationMatrix();
 
-  auto [transform, success] = performRegistration(current_scan_, init_guess);
+  const double relocal_xy_search = std::max(xy_search_range_, kInitRecoveryXYSearchMin);
+  const double relocal_yaw_search = std::max(yaw_search_range_, kInitRecoveryYawSearchMin);
+  auto [transform, success] = performRegistration(
+      current_scan_, init_guess, relocal_xy_search, relocal_yaw_search);
 
   if (success) {
     publishTransform(transform);
@@ -294,9 +345,17 @@ void SmallGicpNode::initialPoseCallback(
     RCLCPP_INFO(this->get_logger(), "Relocalization successful with score: %.6f", last_registration_score_);
   } else {
     RCLCPP_ERROR(this->get_logger(), "Relocalization failed");
-    // Keep it pending so we can retry on the next scan.
-    pending_initialpose_ = msg;
-    has_pending_initialpose_ = true;
+    if (!is_initialized_) {
+      RCLCPP_WARN(this->get_logger(),
+                  "Relocalization fallback: bootstrap map->odom from requested initial pose");
+      publishTransform(init_guess);
+      is_initialized_ = true;
+      first_scan_ = false;
+    }
+    // Do not keep retrying pending /initialpose on every scan; it can starve tracking.
+    // The updated initial_pose_ still participates in normal registration initialization.
+    pending_initialpose_.reset();
+    has_pending_initialpose_ = false;
   }
 }
 
@@ -315,13 +374,16 @@ Eigen::Isometry3d SmallGicpNode::transformStampedToEigen(const geometry_msgs::ms
 }
 
 std::pair<Eigen::Isometry3d, bool> SmallGicpNode::performRegistration(
-    const PointCloudPtr& source, const Eigen::Isometry3d& init_guess) {
+    const PointCloudPtr& source,
+    const Eigen::Isometry3d& init_guess,
+    double xy_search_range,
+    double yaw_search_range) {
   
   // 对输入点云进行降采样
   auto downsampled_source = small_gicp::voxelgrid_sampling(*source, downsampling_resolution_);
   
   // 生成候选位姿
-  auto candidate_poses = generateCandidatePoses(init_guess);
+  auto candidate_poses = generateCandidatePoses(init_guess, xy_search_range, yaw_search_range);
   
   double best_score = std::numeric_limits<double>::max();
   Eigen::Isometry3d best_transform = init_guess;
@@ -358,7 +420,9 @@ std::pair<Eigen::Isometry3d, bool> SmallGicpNode::performRegistration(
 }
 
 std::vector<Eigen::Isometry3d> SmallGicpNode::generateCandidatePoses(
-    const Eigen::Isometry3d& init_guess) {
+    const Eigen::Isometry3d& init_guess,
+    double xy_search_range,
+    double yaw_search_range) {
   
   std::vector<Eigen::Isometry3d> candidates;
   
@@ -371,9 +435,9 @@ std::vector<Eigen::Isometry3d> SmallGicpNode::generateCandidatePoses(
   double init_yaw = euler(2);
 
   // 在XY平面和Yaw角度周围生成候选位姿
-  for (double dx = -xy_search_range_; dx <= xy_search_range_; dx += xy_step_) {
-    for (double dy = -xy_search_range_; dy <= xy_search_range_; dy += xy_step_) {
-      for (double dyaw = -yaw_search_range_; dyaw <= yaw_search_range_; dyaw += yaw_step_) {
+  for (double dx = -xy_search_range; dx <= xy_search_range; dx += xy_step_) {
+    for (double dy = -xy_search_range; dy <= xy_search_range; dy += xy_step_) {
+      for (double dyaw = -yaw_search_range; dyaw <= yaw_search_range; dyaw += yaw_step_) {
         
         Eigen::Isometry3d candidate = Eigen::Isometry3d::Identity();
         
@@ -420,13 +484,58 @@ void SmallGicpNode::publishTransform(const Eigen::Isometry3d& map_to_laser) {
 
     // 转换并发布TF
     std::lock_guard<std::mutex> lock(mutex_);
+    last_map_to_laser_ = map_to_laser;
+    has_last_map_to_laser_ = true;
     map_to_odom_ = eigenToTransformStamped(
-        map_to_odom, map_frame_id_, odom_frame_id_, this->get_clock()->now());
+        map_to_odom,
+        map_frame_id_,
+        odom_frame_id_,
+        this->get_clock()->now() + rclcpp::Duration::from_seconds(tf_future_tolerance_));
     
     tf_broadcaster_->sendTransform(map_to_odom_);
     
   } catch (tf2::TransformException &ex) {
     RCLCPP_ERROR(this->get_logger(), "Transform lookup failed: %s", ex.what());
+  }
+}
+
+void SmallGicpNode::publishPredictedTransformFromOdom() {
+  Eigen::Isometry3d map_to_laser = Eigen::Isometry3d::Identity();
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!has_last_map_to_laser_) {
+      return;
+    }
+    map_to_laser = last_map_to_laser_;
+  }
+
+  try {
+    auto transform_stamped = tf_buffer_->lookupTransform(
+        laser_frame_id_, range_odom_frame_id_, rclcpp::Time(0), rclcpp::Duration::from_seconds(0.2));
+    Eigen::Isometry3d laser_to_odom = Eigen::Isometry3d::Identity();
+    laser_to_odom.translation() = Eigen::Vector3d(
+        transform_stamped.transform.translation.x,
+        transform_stamped.transform.translation.y,
+        transform_stamped.transform.translation.z
+    );
+    laser_to_odom.linear() = Eigen::Quaterniond(
+        transform_stamped.transform.rotation.w,
+        transform_stamped.transform.rotation.x,
+        transform_stamped.transform.rotation.y,
+        transform_stamped.transform.rotation.z
+    ).toRotationMatrix();
+
+    Eigen::Isometry3d map_to_odom = map_to_laser * laser_to_odom;
+    std::lock_guard<std::mutex> lock(mutex_);
+    map_to_odom_ = eigenToTransformStamped(
+        map_to_odom,
+        map_frame_id_,
+        odom_frame_id_,
+        this->get_clock()->now() + rclcpp::Duration::from_seconds(tf_future_tolerance_));
+    tf_broadcaster_->sendTransform(map_to_odom_);
+  } catch (tf2::TransformException &ex) {
+    RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                         "Predictive TF fallback failed: %s", ex.what());
   }
 }
 
