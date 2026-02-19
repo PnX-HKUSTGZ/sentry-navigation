@@ -280,7 +280,7 @@ for ((round = 1; round <= ROUNDS; round++)); do
     start_ns="$(date +%s%N)"
 
     set +e
-    timeout "${GOAL_TIMEOUT}" ros2 action send_goal "${ACTION_NAME}" nav2_msgs/action/NavigateToPose \
+    timeout --signal=TERM --kill-after=5 "${GOAL_TIMEOUT}" ros2 action send_goal "${ACTION_NAME}" nav2_msgs/action/NavigateToPose \
       "{pose: {header: {frame_id: 'map', stamp: {sec: 0, nanosec: 0}}, pose: {position: {x: ${gx}, y: ${gy}, z: 0.0}, orientation: {x: 0.0, y: 0.0, z: ${gqz}, w: ${gqw}}}}}" \
       > "${goal_log}" 2>&1
     rc=$?

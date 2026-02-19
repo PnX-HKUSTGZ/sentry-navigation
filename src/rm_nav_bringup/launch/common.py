@@ -3,7 +3,7 @@ import yaml
 
 from ament_index_python.packages import get_package_share_directory
 from launch.substitutions import Command
-from launch.actions import IncludeLaunchDescription
+from launch.actions import ExecuteProcess, IncludeLaunchDescription
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 from launch.launch_description_sources import PythonLaunchDescriptionSource
@@ -68,6 +68,13 @@ nav_rviz = LaunchConfiguration('nav_rviz', default='true')  # Navigation2 RViz�
 dual_lidar_cfg = launch_params.get("dual_lidar", {})
 dual_lidar_enable = bool(dual_lidar_cfg.get("enable", False))
 dual_lidar_nav2_consume_right = bool(dual_lidar_cfg.get("nav2_consume_right", True))
+dual_lidar_obstacle_fusion_mode = str(
+    dual_lidar_cfg.get("obstacle_fusion_mode", "separate")
+).strip().lower()
+if dual_lidar_obstacle_fusion_mode not in {"separate", "merged"}:
+    raise ValueError(
+        "dual_lidar.obstacle_fusion_mode 仅支持 'separate' 或 'merged'"
+    )
 
 # 主雷达沿用历史参数键，避免影响既有配置与定位链路。
 primary_lidar_pose = launch_params["base_link2livox_frame"]
@@ -105,6 +112,7 @@ print(f"  仿真模式: {use_sim}")
 print(f"  LIO可视化: {use_lio_rviz}")
 print(f"  双雷达: {dual_lidar_enable}")
 print(f"  Nav2消费右雷达: {dual_lidar_nav2_consume_right}")
+print(f"  双雷达障碍融合模式: {dual_lidar_obstacle_fusion_mode}")
 
 if use_sim:
     config_dir = os.path.join(rm_nav_bringup_dir, "config", "simulation")
@@ -162,6 +170,11 @@ segmentation_right_params = os.path.join(config_dir, "segmentation_right.yaml")
 pointcloud_to_laserscan_params = os.path.join(
     config_dir, "pointcloud_to_laserscan.yaml"
 )
+obstacle_merge_script = os.path.join(rm_nav_bringup_dir, "scripts", "merge_obstacle_clouds.py")
+
+scan_cloud_input_topic = "/segmentation/obstacle"
+if dual_lidar_enable and dual_lidar_obstacle_fusion_mode == "merged":
+    scan_cloud_input_topic = "/segmentation/obstacle_merged"
 
 # ================================== FAST_LIO parameters ==================================
 fastlio_mid360_params = os.path.join(
@@ -265,6 +278,7 @@ def _get_nav2_params_file(
     controller_type: str,
     dual_lidar_enabled: bool,
     nav2_consume_right: bool,
+    obstacle_fusion_mode: str,
 ) -> str:
     base_params = os.path.join(config_dir, "nav2_params.yaml")
     merged_params = _load_yaml(base_params)
@@ -280,12 +294,21 @@ def _get_nav2_params_file(
             replace_keys={'controller_server'},
         )
 
-    # If dual lidar is disabled, or right lidar should not be consumed by Nav2,
-    # strip right-lidar observation sources from all Nav2 costmaps.
-    if (not dual_lidar_enabled) or (not nav2_consume_right):
+    # In single-lidar mode or merged-obstacle mode, Nav2 should not subscribe
+    # the right source directly to avoid duplicate obstacle marking.
+    if (
+        (not dual_lidar_enabled)
+        or (not nav2_consume_right)
+        or obstacle_fusion_mode == "merged"
+    ):
         merged_params = _drop_dual_lidar_sources(merged_params)
 
-    if controller_type == 'teb' and dual_lidar_enabled and nav2_consume_right:
+    if (
+        controller_type == 'teb'
+        and dual_lidar_enabled
+        and nav2_consume_right
+        and obstacle_fusion_mode != "merged"
+    ):
         # Fast-path: base file already matches requested setup.
         return base_params
 
@@ -296,7 +319,8 @@ def _get_nav2_params_file(
         (
             f"nav2_params_{'sim' if use_sim else 'real'}_{controller_type}_"
             f"{'dual' if dual_lidar_enabled else 'single'}_"
-            f"{'consume_right' if nav2_consume_right else 'ignore_right'}.yaml"
+            f"{'consume_right' if nav2_consume_right else 'ignore_right'}_"
+            f"{obstacle_fusion_mode}.yaml"
         )
     )
     with open(out_file, 'w', encoding='utf-8') as f:
@@ -315,6 +339,7 @@ nav2_params_file_dir = _get_nav2_params_file(
     controller,
     dual_lidar_enable,
     dual_lidar_nav2_consume_right,
+    dual_lidar_obstacle_fusion_mode,
 )
 
 # =============================== icp_registration parameters ==============================
@@ -377,13 +402,42 @@ if bringup_linefit_ground_segmentation_right_node is not None:
         bringup_linefit_ground_segmentation_right_node
     )
 
+bringup_obstacle_merge_process = None
+if dual_lidar_enable and dual_lidar_obstacle_fusion_mode == "merged":
+    if not os.path.exists(obstacle_merge_script):
+        raise FileNotFoundError(
+            f"融合脚本不存在: {obstacle_merge_script}"
+        )
+    merge_cmd = [
+        "/usr/bin/python3",
+        obstacle_merge_script,
+        "--target-frame",
+        "livox_frame",
+        "--left-topic",
+        "/segmentation/obstacle",
+        "--right-topic",
+        "/segmentation/obstacle_right",
+        "--output-topic",
+        "/segmentation/obstacle_merged",
+        "--publish-rate",
+        "5.0",
+        "--max-points-per-cloud",
+        "4000",
+    ]
+    if use_sim:
+        merge_cmd.append("--use-sim-time")
+    bringup_obstacle_merge_process = ExecuteProcess(
+        cmd=merge_cmd,
+        output="screen",
+    )
+
 # 点云转激光扫描节点 - 将3D点云数据转换为2D激光扫描数据供导航使用
 bringup_pointcloud_to_laserscan_node = Node(
     package="pointcloud_to_laserscan",
     executable="pointcloud_to_laserscan_node",
     name="pointcloud_to_laserscan",
     parameters=[pointcloud_to_laserscan_params, {"target_frame": "livox_frame"}],
-    remappings=[("cloud_in", "/segmentation/obstacle"), ("scan", "/scan")],
+    remappings=[("cloud_in", scan_cloud_input_topic), ("scan", "/scan")],
 )
 
 # IMU互补滤波器 - 融合加速度计和陀螺仪数据提供稳定的姿态估计

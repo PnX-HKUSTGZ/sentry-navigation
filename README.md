@@ -185,6 +185,9 @@ dual_lidar:
   # true: Nav2 同时消费右雷达障碍点云
   # false: 右雷达链路仍可启动，但Nav2只使用主雷达
   nav2_consume_right: true
+  # separate: 左右障碍独立进入Nav2
+  # merged: 先把左右障碍点云融合为 /segmentation/obstacle_merged，再由 /scan 单路进入Nav2
+  obstacle_fusion_mode: separate
 
 # 局部控制器: teb(默认) 或 dwb
 controller: teb

@@ -7,6 +7,7 @@ base_link2livox_right_frame:
 dual_lidar:
   enable: false
   nav2_consume_right: true
+  obstacle_fusion_mode: separate
 controller: dwb
 lio: fastlio
 localization: slam_toolbox

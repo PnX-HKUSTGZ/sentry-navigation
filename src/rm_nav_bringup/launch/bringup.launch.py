@@ -48,6 +48,7 @@ def _launch_setup(context, *args, **kwargs):
         use_sim,
         use_lio_rviz,
         dual_lidar_enable,
+        dual_lidar_obstacle_fusion_mode,
         icp_map_exists,
         slam_map_exists,
         fastlio_rviz_cfg_dir,
@@ -55,6 +56,7 @@ def _launch_setup(context, *args, **kwargs):
         # 节点定义
         bringup_linefit_ground_segmentation_node,
         bringup_linefit_ground_segmentation_nodes,
+        bringup_obstacle_merge_process,
         bringup_pointcloud_to_laserscan_node,
         start_imu_complementary_filter,
         start_navigation2,
@@ -89,8 +91,12 @@ def _launch_setup(context, *args, **kwargs):
     actions.append(start_imu_complementary_filter)
     if dual_lidar_enable:
         print("   启用双雷达分割链路（primary + right）")
+    if dual_lidar_enable and dual_lidar_obstacle_fusion_mode == "merged":
+        print("   启用后融合障碍点云（/segmentation/obstacle_merged）")
     for segmentation_node in bringup_linefit_ground_segmentation_nodes:
         actions.append(segmentation_node)
+    if bringup_obstacle_merge_process is not None:
+        actions.append(bringup_obstacle_merge_process)
     actions.append(bringup_pointcloud_to_laserscan_node)
     # 3. LIO算法
 
