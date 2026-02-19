@@ -13,9 +13,12 @@
     </inertial>
   </xacro:macro>
 
-  <!-- base_link to livox_frame -->
+  <!-- base_link to primary livox_frame -->
   <xacro:arg name="xyz" default="0.12 0.0 0.175" />
   <xacro:arg name="rpy" default="0 0 0" />
+  <xacro:arg name="dual_lidar" default="false" />
+  <xacro:arg name="right_xyz" default="0.12 -0.14 0.175" />
+  <xacro:arg name="right_rpy" default="0 0 -0.610865" />
 
   <link name="dummy"/>
 
@@ -201,6 +204,11 @@
   <gazebo reference="livox_frame">
     <material>Gazebo/LightBlueLaser</material>
   </gazebo>
+  <xacro:if value="$(arg dual_lidar)">
+    <gazebo reference="livox_right_frame">
+      <material>Gazebo/LightBlueLaser</material>
+    </gazebo>
+  </xacro:if>
 
   <!-- Drive controller plugin-->
   <!-- https://github.com/ros-simulation/gazebo_ros_pkgs/wiki/ROS-2-Migration:-Planar-Move -->
@@ -255,5 +263,10 @@
   <xacro:mid360 name="livox_frame" parent="base_link" topic="/livox/lidar">
     <origin xyz="$(arg xyz)" rpy="$(arg rpy)" />
   </xacro:mid360>
+  <xacro:if value="$(arg dual_lidar)">
+    <xacro:mid360 name="livox_right_frame" parent="base_link" topic="/livox_right/lidar">
+      <origin xyz="$(arg right_xyz)" rpy="$(arg right_rpy)" />
+    </xacro:mid360>
+  </xacro:if>
 
 </robot>

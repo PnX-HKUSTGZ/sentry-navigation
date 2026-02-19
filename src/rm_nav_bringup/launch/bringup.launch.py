@@ -47,12 +47,14 @@ def _launch_setup(context, *args, **kwargs):
         localization,
         use_sim,
         use_lio_rviz,
+        dual_lidar_enable,
         icp_map_exists,
         slam_map_exists,
         fastlio_rviz_cfg_dir,
         pointlio_rviz_cfg_dir,
         # 节点定义
         bringup_linefit_ground_segmentation_node,
+        bringup_linefit_ground_segmentation_nodes,
         bringup_pointcloud_to_laserscan_node,
         start_imu_complementary_filter,
         start_navigation2,
@@ -85,7 +87,10 @@ def _launch_setup(context, *args, **kwargs):
     # 2. 传感器处理节点
     print("2. 启动传感器处理节点...")
     actions.append(start_imu_complementary_filter)
-    actions.append(bringup_linefit_ground_segmentation_node)
+    if dual_lidar_enable:
+        print("   启用双雷达分割链路（primary + right）")
+    for segmentation_node in bringup_linefit_ground_segmentation_nodes:
+        actions.append(segmentation_node)
     actions.append(bringup_pointcloud_to_laserscan_node)
     # 3. LIO算法
 

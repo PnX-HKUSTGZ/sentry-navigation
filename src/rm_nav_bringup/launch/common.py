@@ -65,6 +65,19 @@ use_sim_time = LaunchConfiguration(
 use_sim_time_param = ParameterValue(use_sim_time, value_type=bool)
 use_lio_rviz = launch_params.get("use_lio_rviz", False)  # 可视化 FAST_LIO 或 Point_LIO 的点云图
 nav_rviz = LaunchConfiguration('nav_rviz', default='true')  # Navigation2 RViz（可由 launch 参数覆盖）
+dual_lidar_cfg = launch_params.get("dual_lidar", {})
+dual_lidar_enable = bool(dual_lidar_cfg.get("enable", False))
+dual_lidar_nav2_consume_right = bool(dual_lidar_cfg.get("nav2_consume_right", True))
+
+# 主雷达沿用历史参数键，避免影响既有配置与定位链路。
+primary_lidar_pose = launch_params["base_link2livox_frame"]
+right_lidar_pose = launch_params.get(
+    "base_link2livox_right_frame",
+    {
+        "xyz": '"0.12 -0.14 0.175"',
+        "rpy": '"0.0 0.0 -0.610865"',
+    },
+)
 
 # 参数验证
 valid_modes = ["mapping", "nav"]
@@ -90,6 +103,8 @@ print(f"  定位方法: {localization}")
 print(f"  局部控制器: {controller}")
 print(f"  仿真模式: {use_sim}")
 print(f"  LIO可视化: {use_lio_rviz}")
+print(f"  双雷达: {dual_lidar_enable}")
+print(f"  Nav2消费右雷达: {dual_lidar_nav2_consume_right}")
 
 if use_sim:
     config_dir = os.path.join(rm_nav_bringup_dir, "config", "simulation")
@@ -108,9 +123,15 @@ if use_sim:
                 "sentry_robot_sim.xacro",
             ),
             " xyz:=",
-            launch_params["base_link2livox_frame"]["xyz"],
+            primary_lidar_pose["xyz"],
             " rpy:=",
-            launch_params["base_link2livox_frame"]["rpy"],
+            primary_lidar_pose["rpy"],
+            " dual_lidar:=",
+            "true" if dual_lidar_enable else "false",
+            " right_xyz:=",
+            right_lidar_pose["xyz"],
+            " right_rpy:=",
+            right_lidar_pose["rpy"],
         ]
     )
 else:
@@ -123,14 +144,21 @@ else:
                 "sentry_robot_real.xacro",
             ),
             " xyz:=",
-            launch_params["base_link2livox_frame"]["xyz"],
+            primary_lidar_pose["xyz"],
             " rpy:=",
-            launch_params["base_link2livox_frame"]["rpy"],
+            primary_lidar_pose["rpy"],
+            " dual_lidar:=",
+            "true" if dual_lidar_enable else "false",
+            " right_xyz:=",
+            right_lidar_pose["xyz"],
+            " right_rpy:=",
+            right_lidar_pose["rpy"],
         ]
     )
 
 # =========================== pointcloud pretreatment parameters ==========================
 segmentation_params = os.path.join(config_dir, "segmentation.yaml")
+segmentation_right_params = os.path.join(config_dir, "segmentation_right.yaml")
 pointcloud_to_laserscan_params = os.path.join(
     config_dir, "pointcloud_to_laserscan.yaml"
 )
@@ -187,30 +215,107 @@ def _deep_merge(base: dict, overlay: dict, *, replace_keys: set[str]) -> dict:
     return result
 
 
-def _get_nav2_params_file(config_dir: str, controller_type: str) -> str:
-    base_params = os.path.join(config_dir, "nav2_params.yaml")
-    if controller_type == 'teb':
-        return base_params
+def _drop_dual_lidar_sources(nav2_params: dict) -> dict:
+    """Remove right-lidar obstacle sources from Nav2 params for single-lidar mode."""
 
-    overlay = os.path.join(config_dir, f"nav2_controller_{controller_type}.yaml")
-    if not os.path.exists(overlay):
-        raise FileNotFoundError(f"Nav2 controller overlay not found: {overlay}")
+    def _drop_tokens(token_str: str, denied: set[str]) -> str:
+        tokens = [token for token in token_str.split() if token not in denied]
+        return " ".join(tokens)
 
-    merged = _deep_merge(
-        _load_yaml(base_params),
-        _load_yaml(overlay),
-        replace_keys={'controller_server'},
+    # local/global obstacle_layer style
+    for scope in ("local_costmap", "global_costmap"):
+        ros_params = (
+            nav2_params
+            .get(scope, {})
+            .get(scope, {})
+            .get("ros__parameters", {})
+        )
+        obstacle_layer = ros_params.get("obstacle_layer")
+        if isinstance(obstacle_layer, dict):
+            observation_sources = obstacle_layer.get("observation_sources")
+            if isinstance(observation_sources, str):
+                obstacle_layer["observation_sources"] = _drop_tokens(
+                    observation_sources, {"lidar_right"}
+                )
+            obstacle_layer.pop("lidar_right", None)
+
+    # STVL style (real robot global costmap)
+    real_global_ros_params = (
+        nav2_params
+        .get("global_costmap", {})
+        .get("global_costmap", {})
+        .get("ros__parameters", {})
     )
+    stvl_layer = real_global_ros_params.get("stvl_layer")
+    if isinstance(stvl_layer, dict):
+        stvl_observation_sources = stvl_layer.get("observation_sources")
+        if isinstance(stvl_observation_sources, str):
+            stvl_layer["observation_sources"] = _drop_tokens(
+                stvl_observation_sources,
+                {"livox_right_mark", "livox_right_clear"},
+            )
+        stvl_layer.pop("livox_right_mark", None)
+        stvl_layer.pop("livox_right_clear", None)
+
+    return nav2_params
+
+
+def _get_nav2_params_file(
+    config_dir: str,
+    controller_type: str,
+    dual_lidar_enabled: bool,
+    nav2_consume_right: bool,
+) -> str:
+    base_params = os.path.join(config_dir, "nav2_params.yaml")
+    merged_params = _load_yaml(base_params)
+
+    if controller_type != 'teb':
+        overlay = os.path.join(config_dir, f"nav2_controller_{controller_type}.yaml")
+        if not os.path.exists(overlay):
+            raise FileNotFoundError(f"Nav2 controller overlay not found: {overlay}")
+
+        merged_params = _deep_merge(
+            merged_params,
+            _load_yaml(overlay),
+            replace_keys={'controller_server'},
+        )
+
+    # If dual lidar is disabled, or right lidar should not be consumed by Nav2,
+    # strip right-lidar observation sources from all Nav2 costmaps.
+    if (not dual_lidar_enabled) or (not nav2_consume_right):
+        merged_params = _drop_dual_lidar_sources(merged_params)
+
+    if controller_type == 'teb' and dual_lidar_enabled and nav2_consume_right:
+        # Fast-path: base file already matches requested setup.
+        return base_params
 
     out_dir = os.path.join('/tmp', 'rm_nav_bringup')
     os.makedirs(out_dir, exist_ok=True)
-    out_file = os.path.join(out_dir, f"nav2_params_{'sim' if use_sim else 'real'}_{controller_type}.yaml")
+    out_file = os.path.join(
+        out_dir,
+        (
+            f"nav2_params_{'sim' if use_sim else 'real'}_{controller_type}_"
+            f"{'dual' if dual_lidar_enabled else 'single'}_"
+            f"{'consume_right' if nav2_consume_right else 'ignore_right'}.yaml"
+        )
+    )
     with open(out_file, 'w', encoding='utf-8') as f:
-        yaml.safe_dump(merged, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+        yaml.safe_dump(
+            merged_params,
+            f,
+            default_flow_style=False,
+            sort_keys=False,
+            allow_unicode=True,
+        )
     return out_file
 
 
-nav2_params_file_dir = _get_nav2_params_file(config_dir, controller)
+nav2_params_file_dir = _get_nav2_params_file(
+    config_dir,
+    controller,
+    dual_lidar_enable,
+    dual_lidar_nav2_consume_right,
+)
 
 # =============================== icp_registration parameters ==============================
 icp_pcd_dir = os.path.join(rm_nav_bringup_dir, "PCD", map_name + ".pcd")
@@ -253,12 +358,31 @@ bringup_linefit_ground_segmentation_node = Node(
     parameters=[segmentation_params],
 )
 
+bringup_linefit_ground_segmentation_right_node = None
+if dual_lidar_enable:
+    bringup_linefit_ground_segmentation_right_node = Node(
+        package="linefit_ground_segmentation_ros",
+        executable="ground_segmentation_node",
+        namespace="right",
+        name="ground_segmentation",
+        output="screen",
+        parameters=[segmentation_right_params],
+    )
+
+bringup_linefit_ground_segmentation_nodes = [
+    bringup_linefit_ground_segmentation_node
+]
+if bringup_linefit_ground_segmentation_right_node is not None:
+    bringup_linefit_ground_segmentation_nodes.append(
+        bringup_linefit_ground_segmentation_right_node
+    )
+
 # 点云转激光扫描节点 - 将3D点云数据转换为2D激光扫描数据供导航使用
 bringup_pointcloud_to_laserscan_node = Node(
     package="pointcloud_to_laserscan",
     executable="pointcloud_to_laserscan_node",
     name="pointcloud_to_laserscan",
-    parameters=[pointcloud_to_laserscan_params],
+    parameters=[pointcloud_to_laserscan_params, {"target_frame": "livox_frame"}],
     remappings=[("cloud_in", "/segmentation/obstacle"), ("scan", "/scan")],
 )
 
@@ -453,4 +577,3 @@ else:
         output="screen",
         parameters=[livox_ros_driver2_params_dir, {"user_config_path": user_config_path}],
     )
-

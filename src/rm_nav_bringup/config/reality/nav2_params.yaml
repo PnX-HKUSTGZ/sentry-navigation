@@ -270,7 +270,7 @@ local_costmap:
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: true
-        observation_sources: scan
+        observation_sources: scan lidar_right
         scan:
           topic: /scan
           raytrace_max_range: 6.0
@@ -281,6 +281,15 @@ local_costmap:
           marking: true
           inf_is_valid: true
           data_type: "LaserScan"
+        lidar_right:
+          topic: /segmentation/obstacle_right
+          raytrace_max_range: 6.0
+          obstacle_max_range: 4.0
+          obstacle_min_range: 0.45
+          max_obstacle_height: 2.0
+          clearing: true
+          marking: true
+          data_type: "PointCloud2"
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 5.0

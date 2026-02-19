@@ -19,7 +19,19 @@ INIT_Y="${INIT_Y:-3.425}"
 INIT_QZ="${INIT_QZ:--0.2798765}"
 INIT_QW="${INIT_QW:-0.9600360}"
 
+# setup.bash in some deployments reads these vars under `set -u`.
+# Provide safe defaults so the repro script is portable across shells/envs.
+: "${COLCON_TRACE:=0}"
+: "${AMENT_TRACE_SETUP_FILES:=0}"
+: "${AMENT_PYTHON_EXECUTABLE:=/usr/bin/python3}"
+: "${PYTHONPATH:=}"
+: "${LD_LIBRARY_PATH:=}"
+: "${AMENT_PREFIX_PATH:=}"
+: "${CMAKE_PREFIX_PATH:=}"
+
+set +u
 source "${ROOT_DIR}/install/setup.bash"
+set -u
 
 # 0) Require clean ROS graph (avoids duplicate nodes and non-determinism)
 if ros2 node list 2>/dev/null | grep -q .; then

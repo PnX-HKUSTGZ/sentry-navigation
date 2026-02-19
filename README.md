@@ -179,6 +179,13 @@ base_link2livox_frame:
    xyz: '"0.12 0.0 0.175"'
    rpy: '"0.0  0.0  0.0"'
 
+# 双雷达开关与Nav2消费策略
+dual_lidar:
+  enable: false
+  # true: Nav2 同时消费右雷达障碍点云
+  # false: 右雷达链路仍可启动，但Nav2只使用主雷达
+  nav2_consume_right: true
+
 # 局部控制器: teb(默认) 或 dwb
 controller: teb
 
