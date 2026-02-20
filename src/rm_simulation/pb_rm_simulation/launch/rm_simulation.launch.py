@@ -6,7 +6,7 @@ from ament_index_python.packages import get_package_share_directory, get_package
 
 from launch import LaunchDescription
 from launch.substitutions import LaunchConfiguration, Command
-from launch.actions import IncludeLaunchDescription, DeclareLaunchArgument, GroupAction
+from launch.actions import IncludeLaunchDescription, DeclareLaunchArgument, GroupAction, ExecuteProcess
 from launch.actions import TimerAction
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.actions import Node
@@ -81,6 +81,8 @@ def generate_launch_description():
     # Get the launch directory
     bringup_dir = get_package_share_directory('pb_rm_simulation')
     pkg_gazebo_ros = get_package_share_directory('gazebo_ros')
+    gazebo_ros_prefix = get_package_prefix('gazebo_ros')
+    spawn_entity_script = os.path.join(gazebo_ros_prefix, 'lib', 'gazebo_ros', 'spawn_entity.py')
 
     # Specify xacro path
     default_robot_description = Command(['xacro ', os.path.join(
@@ -197,10 +199,10 @@ def generate_launch_description():
                 TimerAction(
                     period=2.0,
                     actions=[
-                        Node(
-                            package='gazebo_ros',
-                            executable='spawn_entity.py',
-                            arguments=[
+                        ExecuteProcess(
+                            cmd=[
+                                '/usr/bin/python3',
+                                spawn_entity_script,
                                 '-entity', 'robot',
                                 '-topic', 'robot_description',
                                 '-x', world_config['x'],
@@ -208,6 +210,7 @@ def generate_launch_description():
                                 '-z', world_config['z'],
                                 '-Y', world_config['yaw']
                             ],
+                            output='screen',
                         )
                     ]
                 ),

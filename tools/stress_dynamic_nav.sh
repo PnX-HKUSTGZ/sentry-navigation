@@ -22,6 +22,10 @@ NAV_START_DELAY="${NAV_START_DELAY:-}"
 LIDAR_NOISE_STDDEV="${LIDAR_NOISE_STDDEV:-}"
 STARTUP_SETTLE_SEC="${STARTUP_SETTLE_SEC:-3}"
 ACTION_WAIT_TIMEOUT="${ACTION_WAIT_TIMEOUT:-90}"
+AMCL_POSE_WAIT_TIMEOUT="${AMCL_POSE_WAIT_TIMEOUT:-25}"
+ODOM_WAIT_TIMEOUT="${ODOM_WAIT_TIMEOUT:-35}"
+ODOM_TOPIC="${ODOM_TOPIC:-auto}"  # auto => probe /Odometry -> /ground_truth/odom -> /odom
+ODOM_TOPIC_CANDIDATES="${ODOM_TOPIC_CANDIDATES:-/Odometry /ground_truth/odom /odom}"
 MAP_TF_WAIT_TIMEOUT="${MAP_TF_WAIT_TIMEOUT:-45}"
 MAP_TF_STABLE_SAMPLES="${MAP_TF_STABLE_SAMPLES:-3}"
 MAP_TF_REQUIRED="${MAP_TF_REQUIRED:-}"
@@ -71,6 +75,9 @@ if [[ "${DRY_RUN}" == "1" ]]; then
   echo "  nav_start_delay=${NAV_START_DELAY:-<auto>}"
   echo "  lidar_noise_stddev=${LIDAR_NOISE_STDDEV:-<config default>}"
   echo "  action_wait_timeout=${ACTION_WAIT_TIMEOUT}s"
+  echo "  amcl_pose_wait_timeout=${AMCL_POSE_WAIT_TIMEOUT}s"
+  echo "  odom_wait_timeout=${ODOM_WAIT_TIMEOUT}s"
+  echo "  odom_topic=${ODOM_TOPIC} (candidates: ${ODOM_TOPIC_CANDIDATES})"
   echo "  map_tf_wait_timeout=${MAP_TF_WAIT_TIMEOUT}s"
   echo "  map_tf_stable_samples=${MAP_TF_STABLE_SAMPLES}"
   echo "  map_tf_required=${MAP_TF_REQUIRED:-<auto>}"
@@ -156,8 +163,11 @@ BRINGUP_PID=""
 
 cleanup() {
   if [[ -n "${BRINGUP_PID}" ]] && kill -0 "${BRINGUP_PID}" 2>/dev/null; then
-    echo "[cleanup] stopping bringup pid=${BRINGUP_PID}" >&2
-    kill "${BRINGUP_PID}" 2>/dev/null || true
+    echo "[cleanup] stopping bringup process group pgid=${BRINGUP_PID}" >&2
+    # bringup is launched with setsid, so killing by negative pid cleans all children.
+    kill -- "-${BRINGUP_PID}" 2>/dev/null || kill "${BRINGUP_PID}" 2>/dev/null || true
+    sleep 1
+    kill -9 -- "-${BRINGUP_PID}" 2>/dev/null || kill -9 "${BRINGUP_PID}" 2>/dev/null || true
   fi
 }
 trap cleanup EXIT
@@ -195,13 +205,110 @@ wait_for_amcl_pose() {
   return 1
 }
 
+wait_for_lifecycle_active() {
+  local node="$1"
+  local timeout_s="$2"
+  local loops=$((timeout_s * 2))
+  local i
+  for ((i = 1; i <= loops; i++)); do
+    if timeout 2 ros2 lifecycle get "${node}" 2>/dev/null | grep -qi "active"; then
+      return 0
+    fi
+    sleep 0.5
+  done
+  return 1
+}
+
+wait_for_topic_once() {
+  local topic="$1"
+  local timeout_s="$2"
+  local loops=$((timeout_s * 2))
+  local i
+  for ((i = 1; i <= loops; i++)); do
+    if timeout 1 ros2 topic echo "${topic}" --once >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.5
+  done
+  return 1
+}
+
+topic_has_publisher_once() {
+  local topic="$1"
+  timeout 1 ros2 topic info "${topic}" -v 2>/dev/null \
+    | awk '/Publisher count:/ {if ($3+0 > 0) found=1} END {exit(found?0:1)}'
+}
+
+wait_for_topic_publisher() {
+  local topic="$1"
+  local timeout_s="$2"
+  local loops=$((timeout_s * 2))
+  local i
+  for ((i = 1; i <= loops; i++)); do
+    if topic_has_publisher_once "${topic}"; then
+      return 0
+    fi
+    sleep 0.5
+  done
+  return 1
+}
+
+resolve_odom_topic_auto() {
+  local timeout_s="$1"
+  local loops=$((timeout_s * 2))
+  local i
+  local cand
+  for ((i = 1; i <= loops; i++)); do
+    for cand in ${ODOM_TOPIC_CANDIDATES}; do
+      if topic_has_publisher_once "${cand}"; then
+        ODOM_TOPIC="${cand}"
+        return 0
+      fi
+    done
+    sleep 0.5
+  done
+  return 1
+}
+
+has_tf_pair_once() {
+  local parent="$1"
+  local child="$2"
+  timeout 2 bash -lc "ros2 topic echo /tf 2>/dev/null | awk -v p='${parent}' -v c='${child}' '
+    \$1==\"frame_id:\" {gsub(/\\\"/, \"\", \$2); frame=\$2}
+    \$1==\"child_frame_id:\" {
+      gsub(/\\\"/, \"\", \$2); ch=\$2
+      if (frame==p && ch==c) {found=1; exit 0}
+    }
+    END {exit(found?0:1)}
+  '"
+}
+
+has_odom_base_tf_once() {
+  has_tf_pair_once "odom" "base_link" || has_tf_pair_once "odom" "base_link_fake"
+}
+
+wait_for_odom_base_tf_stable() {
+  local timeout_s="$1"
+  local stable_samples="$2"
+  local loops=$((timeout_s * 2))
+  local consecutive=0
+  local i
+  for ((i = 1; i <= loops; i++)); do
+    if has_odom_base_tf_once; then
+      consecutive=$((consecutive + 1))
+      if [[ "${consecutive}" -ge "${stable_samples}" ]]; then
+        return 0
+      fi
+    else
+      consecutive=0
+    fi
+    sleep 0.5
+  done
+  return 1
+}
+
 has_map_odom_tf_once() {
-  timeout 1 ros2 topic echo /tf --once 2>/dev/null \
-    | awk '
-      /frame_id: map/ {map=1}
-      /child_frame_id: odom/ {odom=1}
-      END {exit !(map && odom)}
-    '
+  has_tf_pair_once "map" "odom"
 }
 
 wait_for_map_tf_stable() {
@@ -317,7 +424,7 @@ if [[ "${LAUNCH_BRINGUP}" == "1" ]]; then
   if [[ -n "${LIDAR_NOISE_STDDEV}" ]]; then
     launch_cmd+=("lidar_noise_stddev:=${LIDAR_NOISE_STDDEV}")
   fi
-  "${launch_cmd[@]}" > "${ARTIFACT_DIR}/bringup.log" 2>&1 &
+  setsid "${launch_cmd[@]}" > "${ARTIFACT_DIR}/bringup.log" 2>&1 &
   BRINGUP_PID=$!
 fi
 
@@ -349,6 +456,54 @@ echo "[INFO] Action server: ${ACTION_NAME}"
 if [[ "${LOCALIZATION}" == "icp" || "${LOCALIZATION}" == "small_gicp" ]]; then
   echo "[INFO] Re-publish /initialpose once for delayed localization nodes"
   publish_initialpose_once
+fi
+
+if [[ "${ODOM_TOPIC}" == "auto" ]]; then
+  echo "[INFO] Auto-detect odometry topic (${ODOM_TOPIC_CANDIDATES}), timeout=${ODOM_WAIT_TIMEOUT}s"
+  if resolve_odom_topic_auto "${ODOM_WAIT_TIMEOUT}"; then
+    echo "[INFO] odometry topic detected: ${ODOM_TOPIC}"
+  else
+    echo "[ERROR] failed to detect any odometry topic with live messages from candidates: ${ODOM_TOPIC_CANDIDATES}" >&2
+    exit 11
+  fi
+else
+  echo "[INFO] Wait for odometry signal (${ODOM_TOPIC}), timeout=${ODOM_WAIT_TIMEOUT}s"
+  if wait_for_topic_publisher "${ODOM_TOPIC}" "${ODOM_WAIT_TIMEOUT}"; then
+    echo "[INFO] ${ODOM_TOPIC} publisher detected."
+  else
+    echo "[ERROR] ${ODOM_TOPIC} has no publisher; localization/odom chain not ready." >&2
+    exit 11
+  fi
+fi
+
+echo "[INFO] Wait for stable odom->base_link TF"
+if wait_for_odom_base_tf_stable "${ODOM_WAIT_TIMEOUT}" 3; then
+  echo "[INFO] stable odom->base_link TF detected."
+else
+  echo "[ERROR] odom->base_link TF not stable in time." >&2
+  exit 12
+fi
+
+if [[ "${LOCALIZATION}" == "amcl" ]]; then
+  if ! wait_for_amcl_pose "${AMCL_POSE_WAIT_TIMEOUT}"; then
+    echo "[WARN] /amcl_pose still missing after ${AMCL_POSE_WAIT_TIMEOUT}s; re-publish /initialpose burst and retry..." >&2
+    publish_initialpose
+    if ! wait_for_amcl_pose "${AMCL_POSE_WAIT_TIMEOUT}"; then
+      echo "[ERROR] /amcl_pose not available; localization not initialized." >&2
+      exit 8
+    fi
+  fi
+  echo "[INFO] /amcl_pose ready."
+
+  echo "[INFO] Wait for Nav2 lifecycle nodes active (bt_navigator/controller_server)"
+  if ! wait_for_lifecycle_active "/bt_navigator" 40; then
+    echo "[ERROR] /bt_navigator not ACTIVE in time." >&2
+    exit 9
+  fi
+  if ! wait_for_lifecycle_active "/controller_server" 40; then
+    echo "[ERROR] /controller_server not ACTIVE in time." >&2
+    exit 9
+  fi
 fi
 if [[ "${STARTUP_SETTLE_SEC}" != "0" ]]; then
   echo "[INFO] Settling ${STARTUP_SETTLE_SEC}s for lifecycle stabilization..."

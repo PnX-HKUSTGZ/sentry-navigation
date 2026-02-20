@@ -259,8 +259,8 @@ controller_server:
 local_costmap:
   local_costmap:
     ros__parameters:
-      update_frequency: 20.0
-      publish_frequency: 10.0
+      update_frequency: 12.0
+      publish_frequency: 6.0
       global_frame: odom
       robot_base_frame: base_link
       use_sim_time: True
@@ -276,7 +276,7 @@ local_costmap:
         observation_sources: scan lidar_right
         scan:
           topic: /scan
-          expected_update_rate: 0.35
+          expected_update_rate: 0.0
           observation_persistence: 0.6
           raytrace_max_range: 6.0
           obstacle_max_range: 5.5
@@ -325,7 +325,7 @@ global_costmap:
         observation_sources: scan
         scan:
           topic: /scan
-          expected_update_rate: 0.35
+          expected_update_rate: 0.0
           observation_persistence: 0.8
           raytrace_max_range: 6.0
           obstacle_max_range: 5.5
