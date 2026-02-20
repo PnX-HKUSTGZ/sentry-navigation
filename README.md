@@ -14,6 +14,9 @@
 > **RMUL_26 固定版本发布说明（跨仓库 commit pin）**  
 > 见 `docs/RMUL26_REPRO_RELEASE.md`。
 
+> **起伏路段（波峰间距 240mm / 峰谷差 70mm）导航稳定性测试**  
+> 见 `docs/WAVE_ROAD_STABILITY_TEST.md`。
+
 ## 一. 项目介绍
 
 本项目使用全向移动小车，附加 Livox Mid360 雷达与 IMU，在 RMUC/RMUL 地图进行导航算法仿真，仅需要调整参数即可移植到真实机器人中导航。
@@ -243,6 +246,37 @@ world: RMUC_24
 - 当前默认 Nav2 配置使用 `robot_base_frame: base_link_fake`，并配套启动 `fake_vel_transform`（用于将规划朝向与底盘朝向解耦，避免小陀螺时跟踪失效）。
 - 因此：不要在未理解该机制的情况下把 `robot_base_frame` 直接改回 `base_link`，否则会导致局部控制行为与评估结论不一致。
 
+5) **frame 合同（必须同时满足）**
+
+- `AMCL` 必须绑定真实底盘坐标：`amcl.base_frame_id: base_link`
+- `Nav2` 可以绑定控制参考坐标：`robot_base_frame: base_link_fake`
+- TF 链唯一且连续：
+  - `map -> odom`（定位）
+  - `odom -> base_link`（机器人本体）
+  - `base_link -> base_link_fake`（fake_vel_transform）
+- `base_link_fake` 仅用于导航控制解耦（主要是 yaw），不替代真实姿态来源。真实 yaw/pitch/roll 仍以 `base_link` 为准。
+
+6) **frame 快速自检（联调前先跑）**
+
+```bash
+# 推荐：一键检查
+bash tools/check_frame_contract.sh
+
+# 1) 检查 fake frame 是否持续发布
+ros2 run tf2_ros tf2_echo base_link base_link_fake
+
+# 2) 检查 TF 是否有稳定频率
+ros2 topic hz /tf
+
+# 3) 检查 fake 节点参数是否和预期一致
+ros2 param get /fake_vel_transform base_frame
+ros2 param get /fake_vel_transform fake_base_frame
+ros2 param get /fake_vel_transform local_plan_timeout_sec
+
+# 4) 导航中观察是否频繁出现 stale local plan 回退告警
+ros2 topic echo /rosout | grep -E "fake_vel_transform|No fresh local plan"
+```
+
 #### 3.1.2 启动方式
 
 修改配置文件后，使用统一的启动命令：
@@ -251,9 +285,10 @@ world: RMUC_24
 # 启动完整导航系统
 ros2 launch rm_nav_bringup bringup.launch.py
 
-# 命令行选择地图（覆盖 launch_params.yaml 的 world）
-# 例如选择新增 RMUL2026：
-ros2 launch rm_nav_bringup bringup.launch.py map:=RMUL2026 nav_rviz:=false
+# 命令行覆盖仿真 world / 地图资源 / LIO（不改 launch_params.yaml）
+# 例如：RMUL_26 波浪路段 + RMUL26_WAVE 地图别名 + fastlio
+ros2 launch rm_nav_bringup bringup.launch.py \
+  world:=RMUL_26_WAVE map:=RMUL26_WAVE lio:=fastlio nav_rviz:=false
 ```
 
 推荐在本机开发环境使用防污染启动脚本（自动处理 conda Python 污染 + FastDDS SHM）：
@@ -272,6 +307,8 @@ bash tools/launch_nav_safe.sh
    - 仿真模式:
      - `RMUL` - [2024 Robomaster 3V3 场地](https://bbs.robomaster.com/forum.php?mod=viewthread&tid=22942&extra=page%3D1)
      - `RMUC` - [2024 Robomaster 7V7 场地](https://bbs.robomaster.com/forum.php?mod=viewthread&tid=22942&extra=page%3D1)
+     - `RMUL_26` - RMUL 2026 场地
+     - `RMUL_26_WAVE` - RMUL_26 + 波浪路段（波峰间距 240mm，峰谷差 70mm）
    - 真实环境:
      - 自定义名称，对应 `.pcd`(ICP点云图) 和 `.yaml`(栅格地图) 文件名
 
@@ -296,6 +333,11 @@ bash tools/launch_nav_safe.sh
 6. **controller** - 局部控制器:
    - `teb` - 默认控制器（TEB），配置在 `rm_nav_bringup/config/{simulation|reality}/nav2_params.yaml`
    - `dwb` - 切换到 DWB（只覆盖 `controller_server`），配置在 `rm_nav_bringup/config/{simulation|reality}/nav2_controller_dwb.yaml`
+
+8. **命令行覆盖参数（bringup.launch.py）**:
+   - `world:=...` 覆盖仿真世界（例如 `RMUL_26_WAVE`）
+   - `map:=...` 覆盖地图/PCD 资源名（例如 `RMUL26_WAVE`）
+   - `lio:=...` 覆盖 LIO 算法（`fastlio|pointlio`）
 
 7. **可视化选项**:
    - `use_lio_rviz` - 是否启动LIO算法的RViz点云可视化

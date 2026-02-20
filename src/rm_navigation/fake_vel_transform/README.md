@@ -15,7 +15,7 @@ nav2 发布的速度也是基于 `base_link_fake` 坐标系的，通过 tf2 将�
 订阅：
 
 - nav2 发布的基于 base_link_fake 坐标系的速度指令 `/cmd_vel`
-- nav2 controller 发布的局部路径朝向 `/local_path`
+- nav2 controller 发布的局部路径朝向 `/local_plan`
 - `odom` 到 `base_link` 的 tf 变换
 
 发布：
@@ -25,5 +25,14 @@ nav2 发布的速度也是基于 `base_link_fake` 坐标系的，通过 tf2 将�
 静态参数：
 
 - 底盘固定旋转速度 `spin_speed`
+- TF 频率 `tf_publish_frequency`
+- 局部路径超时回退 `local_plan_timeout_sec`
+- 可配置 frame/topic：
+  - `odom_frame`
+  - `base_frame`
+  - `fake_base_frame`
+  - `cmd_vel_topic`
+  - `cmd_vel_out_topic`
+  - `local_plan_topic`
 
   搭配电控固定小陀螺速度，将 spin_speed 设为负，可实现移动时小陀螺减慢。

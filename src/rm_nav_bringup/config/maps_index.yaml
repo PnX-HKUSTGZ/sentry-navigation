@@ -35,6 +35,12 @@ worlds:
     pcd: "src/rm_nav_bringup/PCD/RMUL26.pcd"
     pcd_exists: true
     status: "ok"
+  RMUL26_WAVE:
+    yaml: "src/rm_nav_bringup/map/RMUL26_WAVE.yaml"
+    yaml_exists: true
+    pcd: "src/rm_nav_bringup/PCD/RMUL26.pcd"
+    pcd_exists: true
+    status: "ok"
   RMUL2026:
     yaml: "src/rm_nav_bringup/map/RMUL2026.yaml"
     yaml_exists: true

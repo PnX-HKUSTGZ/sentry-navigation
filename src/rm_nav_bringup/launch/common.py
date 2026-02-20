@@ -31,10 +31,11 @@ except yaml.YAMLError as e:
 # 获取基本参数
 # 注意：launch_params.yaml 里的 world 既被用作仿真 world，也被用作“地图资源名”。
 # 为支持命令行选择地图（map:=XXX）且不影响仿真 world，这里拆分：
-# - world: 仿真 world（仍来自配置文件）
-# - map_name: 地图/PCD 资源名（可由环境变量覆盖）
-world = launch_params.get("world", "RMUL")  # 仿真世界名称，默认为RMUL
-_env_map_name = (os.environ.get("RM_NAV_MAP", "").strip() or os.environ.get("RM_NAV_WORLD", "").strip())
+# - world: 仿真 world（可由环境变量 RM_NAV_WORLD 覆盖）
+# - map_name: 地图/PCD 资源名（可由环境变量 RM_NAV_MAP 覆盖）
+_env_world = os.environ.get("RM_NAV_WORLD", "").strip()
+world = _env_world if _env_world else launch_params.get("world", "RMUL")  # 仿真世界名称，默认为RMUL
+_env_map_name = os.environ.get("RM_NAV_MAP", "").strip()
 map_name = _env_map_name if _env_map_name else world
 
 # 兼容：有些 world 名称含下划线（如 RMUL_26），但 map 资源文件可能不含下划线（如 RMUL26.yaml）。
@@ -50,7 +51,8 @@ if not _env_map_name:
             map_name = fallback
 
 mode = launch_params.get("mode", "nav")  # 获取运行模式 (mapping/nav)，默认为nav
-lio = launch_params.get("lio", "fastlio")  # 激光雷达惯性里程计 (pointlio/fastlio)，默认为fastlio
+_env_lio = os.environ.get("RM_NAV_LIO", "").strip()
+lio = _env_lio if _env_lio else launch_params.get("lio", "fastlio")  # 激光雷达惯性里程计 (pointlio/fastlio)，默认为fastlio
 _env_localization = os.environ.get("RM_NAV_LOCALIZATION", "").strip()
 localization = _env_localization if _env_localization else launch_params.get("localization", "slam_toolbox")  # 获取定位模式 (amcl/slam_toolbox/icp)
 _env_controller = os.environ.get("RM_NAV_CONTROLLER", "").strip()
@@ -547,7 +549,15 @@ bringup_fake_vel_transform_node = Node(
     output='screen',
     parameters=[{
         'use_sim_time': use_sim_time_param,
-        'spin_speed': 0.0  # 旋转速度 (rad/s)
+        'spin_speed': 0.0,  # 旋转速度 (rad/s)
+        'tf_publish_frequency': 20,
+        'local_plan_timeout_sec': 0.5,
+        'odom_frame': 'odom',
+        'base_frame': 'base_link',
+        'fake_base_frame': 'base_link_fake',
+        'cmd_vel_topic': '/cmd_vel',
+        'cmd_vel_out_topic': '/cmd_vel_chassis',
+        'local_plan_topic': '/local_plan'
     }]
 )
 

@@ -1,0 +1,4 @@
+samples=19
+rmse_m=0.0001
+median_m=0.0000
+max_m=0.0001

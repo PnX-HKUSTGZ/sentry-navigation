@@ -31,8 +31,13 @@ private:
 
   void publishTransform();
 
-  // Subscriber with tf2 message_filter
-  std::string target_frame_;
+  std::string odom_frame_{"odom"};
+  std::string base_frame_{"base_link"};
+  std::string fake_base_frame_{"base_link_fake"};
+  std::string cmd_vel_topic_{"/cmd_vel"};
+  std::string cmd_vel_out_topic_{"/cmd_vel_chassis"};
+  std::string local_plan_topic_{"/local_plan"};
+
   std::shared_ptr<tf2_ros::Buffer> tf2_buffer_;
   std::shared_ptr<tf2_ros::TransformListener> tf2_listener_;
 
@@ -46,9 +51,13 @@ private:
   std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
 
   geometry_msgs::msg::PoseStamped planner_local_pose_;
-  double current_angle_;
-  double base_link_angle_;
-  float spin_speed_;
+  rclcpp::Time last_local_plan_stamp_;
+  double current_angle_{0.0};
+  double base_link_angle_{0.0};
+  double local_plan_timeout_sec_{0.5};
+  int tf_publish_frequency_{20};
+  bool has_local_plan_{false};
+  float spin_speed_{0.0F};
 };
 
 }  // namespace fake_vel_transform

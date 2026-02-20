@@ -1,0 +1,7 @@
+total_goals=10
+succeeded=8
+aborted=0
+timeout=2
+other_fail=0
+success_rate_percent=80.0
+avg_duration_sec=36.247

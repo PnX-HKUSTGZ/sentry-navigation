@@ -13,7 +13,17 @@ def generate_launch_description():
         executable='fake_vel_transform_node',
         output='screen',
         parameters=[
-            {'use_sim_time': use_sim_time }
+            {
+                'use_sim_time': use_sim_time,
+                'tf_publish_frequency': 20,
+                'local_plan_timeout_sec': 0.5,
+                'odom_frame': 'odom',
+                'base_frame': 'base_link',
+                'fake_base_frame': 'base_link_fake',
+                'cmd_vel_topic': '/cmd_vel',
+                'cmd_vel_out_topic': '/cmd_vel_chassis',
+                'local_plan_topic': '/local_plan'
+            }
         ]
     )
 

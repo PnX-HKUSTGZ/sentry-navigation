@@ -68,6 +68,35 @@ ros2 action info /navigate_to_pose
 ros2 topic echo -n 1 /amcl_pose
 ```
 
+## Frame contract checks (recommended before stress tests)
+
+These checks prevent silent config drift between localization and control frames.
+
+```bash
+# one-shot checker
+bash tools/check_frame_contract.sh
+
+# AMCL should stay on real body frame
+ros2 param get /amcl base_frame_id
+
+# Nav2 controller stack should consume fake base frame
+ros2 param get /controller_server robot_base_frame
+ros2 param get /bt_navigator robot_base_frame
+
+# fake_vel_transform should publish base_link -> base_link_fake
+ros2 run tf2_ros tf2_echo base_link base_link_fake
+ros2 topic hz /tf
+
+# Optional: monitor fallback warning if /local_plan becomes stale
+ros2 topic echo /rosout | grep -E "fake_vel_transform|No fresh local plan"
+```
+
+Expected values:
+
+- `/amcl base_frame_id` => `base_link`
+- `/controller_server robot_base_frame` => `base_link_fake`
+- `/bt_navigator robot_base_frame` => `base_link_fake`
+
 ## DWB / TEB A/B
 
 ```bash
@@ -76,12 +105,21 @@ source /opt/ros/humble/setup.bash
 source install/setup.bash
 
 LAUNCH_BRINGUP=1 CONTROLLER=dwb ROUNDS=1 GOAL_TIMEOUT=45 BETWEEN_GOALS_SEC=1 \
+GOAL_OCCUPANCY_POLICY=reject \
 WAYPOINTS='-5.0,3.0,0.0,1.0; -4.5,2.6,0.0,1.0' tools/stress_dynamic_nav.sh
 
 LAUNCH_BRINGUP=1 CONTROLLER=teb ROUNDS=1 GOAL_TIMEOUT=45 BETWEEN_GOALS_SEC=1 \
+GOAL_OCCUPANCY_POLICY=reject \
 WAYPOINTS='-5.0,3.0,0.0,1.0; -4.5,2.6,0.0,1.0' tools/stress_dynamic_nav.sh
 ```
 
 Artifacts are written to:
 
 - `sentry-navigation/artifacts/nav_stress_<timestamp>/`
+
+Goal occupancy policy options:
+
+- `off`: disable map occupancy check
+- `warn`: print warning only
+- `reject`: skip occupied/unknown/out-of-map goals (recommended)
+- `snap`: auto-snap invalid goals to nearest free cell within `GOAL_NEAREST_RADIUS` (m)

@@ -26,6 +26,10 @@ sys.path.append(os.path.join(get_package_share_directory('rm_nav_bringup'), 'lau
 
 
 def _launch_setup(context, *args, **kwargs):
+    world_override = LaunchConfiguration('world').perform(context).strip()
+    if world_override:
+        os.environ['RM_NAV_WORLD'] = world_override
+
     map_override = LaunchConfiguration('map').perform(context).strip()
     if map_override:
         os.environ['RM_NAV_MAP'] = map_override
@@ -33,6 +37,10 @@ def _launch_setup(context, *args, **kwargs):
     localization_override = LaunchConfiguration('localization').perform(context).strip()
     if localization_override:
         os.environ['RM_NAV_LOCALIZATION'] = localization_override
+
+    lio_override = LaunchConfiguration('lio').perform(context).strip()
+    if lio_override:
+        os.environ['RM_NAV_LIO'] = lio_override
 
     controller_override = LaunchConfiguration('controller').perform(context).strip()
     if controller_override:
@@ -202,9 +210,25 @@ def generate_launch_description():
 
     ld.add_action(
         DeclareLaunchArgument(
+            'world',
+            default_value='',
+            description='Gazebo world override. Example: world:=RMUL_26_WAVE. If empty, uses config/launch_params.yaml.'
+        )
+    )
+
+    ld.add_action(
+        DeclareLaunchArgument(
             'map',
             default_value='',
             description='Map/PCD resource name override. Example: map:=RMUL2026. If empty, uses config/launch_params.yaml world.'
+        )
+    )
+
+    ld.add_action(
+        DeclareLaunchArgument(
+            'lio',
+            default_value='',
+            description='LIO override: fastlio|pointlio. If empty, uses config/launch_params.yaml.'
         )
     )
 

@@ -1,0 +1,14 @@
+Open-area wave test summary
+- Nav run artifact: /tmp/openwave_y2p2_nav_20260220_130502
+- Result: total=10, succeeded=8, timeout=2, aborted=0
+
+Controller log counters (run /tmp/roslog_nav_stress_20260220_130502/controller_server_1410815_1771563912817.log)
+- tf_err (Transform data too old / Extrapolation / Could not transform plan): 194
+- Controller patience exceeded: 7
+- No valid trajectories: 4
+- Failed to make progress: 13
+
+Static drift diagnostic
+- Artifact: /tmp/drift_service_diag_20260220_132641
+- Collector counters: tf_msgs=1569, map_odom_tf=446, amcl_msgs=13, gt_msgs=120, rows=19
+- Error metrics: samples=19, rmse=0.0001 m, median=0.0000 m, max=0.0001 m

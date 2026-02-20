@@ -21,6 +21,7 @@ class WorldType:
     RMUC_25 = 'RMUC_25'
     RMUC_26 = 'RMUC_26'
     RMUL_26 = 'RMUL_26'
+    RMUL_26_WAVE = 'RMUL_26_WAVE'
 
 def get_world_config(world_type):
     world_configs = {
@@ -64,6 +65,14 @@ def get_world_config(world_type):
             'z': '1.16',
             'yaw': '-0.567331',
             'world_path': 'RMUL2026_world/RMUL2026_world.world'
+        },
+        WorldType.RMUL_26_WAVE: {
+            # Same spawn as RMUL_26, with an added wave strip near own-side corridor.
+            'x': '-5.375',
+            'y': '3.425',
+            'z': '1.16',
+            'yaw': '-0.567331',
+            'world_path': 'RMUL2026_world/RMUL2026_wave.world'
         }
     }
     return world_configs.get(world_type, None)
@@ -115,7 +124,7 @@ def generate_launch_description():
     declare_world_cmd = DeclareLaunchArgument(
         'world',
         default_value=WorldType.RMUC_24,
-        description='Choose <RMUC_24> or <RMUL_24> or <RMUC_25> or <RMUC_26> or <RMUL_26>'
+        description='Choose <RMUC_24> or <RMUL_24> or <RMUC_25> or <RMUC_26> or <RMUL_26> or <RMUL_26_WAVE>'
     )
 
     declare_gui_cmd = DeclareLaunchArgument(
@@ -210,6 +219,7 @@ def generate_launch_description():
     bringup_RMUC_25_cmd_group = create_gazebo_launch_group(WorldType.RMUC_25)
     bringup_RMUC_26_cmd_group = create_gazebo_launch_group(WorldType.RMUC_26)
     bringup_RMUL_26_cmd_group = create_gazebo_launch_group(WorldType.RMUL_26)
+    bringup_RMUL_26_WAVE_cmd_group = create_gazebo_launch_group(WorldType.RMUL_26_WAVE)
 
     # Create the launch description and populate
     ld = LaunchDescription()
@@ -232,6 +242,7 @@ def generate_launch_description():
     ld.add_action(bringup_RMUC_25_cmd_group) # type: ignore
     ld.add_action(bringup_RMUC_26_cmd_group) # type: ignore
     ld.add_action(bringup_RMUL_26_cmd_group) # type: ignore
+    ld.add_action(bringup_RMUL_26_WAVE_cmd_group) # type: ignore
 
     # Uncomment this line if you want to start RViz
     ld.add_action(start_rviz_cmd)

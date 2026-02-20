@@ -22,6 +22,13 @@ NAV_START_DELAY="${NAV_START_DELAY:-}"
 STARTUP_SETTLE_SEC="${STARTUP_SETTLE_SEC:-3}"
 ACTION_WAIT_TIMEOUT="${ACTION_WAIT_TIMEOUT:-90}"
 MAP_TF_WAIT_TIMEOUT="${MAP_TF_WAIT_TIMEOUT:-45}"
+BRINGUP_WORLD="${BRINGUP_WORLD:-}"
+BRINGUP_MAP="${BRINGUP_MAP:-}"
+BRINGUP_LIO="${BRINGUP_LIO:-}"
+CLEAR_COSTMAP_BEFORE_GOAL="${CLEAR_COSTMAP_BEFORE_GOAL:-0}"
+GOAL_OCCUPANCY_POLICY="${GOAL_OCCUPANCY_POLICY:-reject}"  # off|warn|reject|snap
+GOAL_NEAREST_RADIUS="${GOAL_NEAREST_RADIUS:-1.5}"
+MAP_YAML_PATH="${MAP_YAML_PATH:-}"
 
 INIT_X="${INIT_X:--5.0}"
 INIT_Y="${INIT_Y:-3.0}"
@@ -50,6 +57,13 @@ if [[ "${DRY_RUN}" == "1" ]]; then
   echo "  launch_bringup=${LAUNCH_BRINGUP}"
   echo "  use_robostack=${USE_ROBOSTACK}"
   echo "  localization=${LOCALIZATION}"
+  echo "  world=${BRINGUP_WORLD:-<config default>}"
+  echo "  map=${BRINGUP_MAP:-<config/world default>}"
+  echo "  lio=${BRINGUP_LIO:-<config default>}"
+  echo "  clear_costmap_before_goal=${CLEAR_COSTMAP_BEFORE_GOAL}"
+  echo "  goal_occupancy_policy=${GOAL_OCCUPANCY_POLICY}"
+  echo "  goal_nearest_radius=${GOAL_NEAREST_RADIUS}m"
+  echo "  map_yaml_path=${MAP_YAML_PATH:-<auto>}"
   echo "  controller=${CONTROLLER:-<default>}"
   echo "  nav_start_delay=${NAV_START_DELAY:-<auto>}"
   echo "  action_wait_timeout=${ACTION_WAIT_TIMEOUT}s"
@@ -111,6 +125,15 @@ EOF
 
 setup_ros_env
 
+# Validate occupancy policy early.
+case "${GOAL_OCCUPANCY_POLICY}" in
+  off|warn|reject|snap) ;;
+  *)
+    echo "[ERROR] invalid GOAL_OCCUPANCY_POLICY=${GOAL_OCCUPANCY_POLICY}, expected one of: off|warn|reject|snap" >&2
+    exit 7
+    ;;
+esac
+
 # Refresh ros2 daemon to avoid stale graph cache during rapid relaunch loops.
 ros2 daemon stop >/dev/null 2>&1 || true
 ros2 daemon start >/dev/null 2>&1 || true
@@ -171,6 +194,18 @@ wait_for_map_tf() {
   return 1
 }
 
+clear_costmaps() {
+  # Clear costmaps to reduce stale obstacle influence between consecutive goals.
+  local srv
+  for srv in \
+    "/local_costmap/clear_entirely_local_costmap" \
+    "/global_costmap/clear_entirely_global_costmap"; do
+    if ros2 service list 2>/dev/null | grep -qx "${srv}"; then
+      timeout 3 ros2 service call "${srv}" nav2_msgs/srv/ClearEntireCostmap "{}" >/dev/null 2>&1 || true
+    fi
+  done
+}
+
 publish_initialpose() {
   timeout 4 ros2 topic pub --rate 5 /initialpose geometry_msgs/msg/PoseWithCovarianceStamped \
     "{header: {frame_id: 'map', stamp: {sec: 0, nanosec: 0}}, pose: {pose: {position: {x: ${INIT_X}, y: ${INIT_Y}, z: 0.0}, orientation: {x: 0.0, y: 0.0, z: ${INIT_QZ}, w: ${INIT_QW}}}}}" \
@@ -183,6 +218,49 @@ publish_initialpose_once() {
     --qos-reliability best_effort --qos-durability volatile >/dev/null 2>&1 || true
 }
 
+get_param_value() {
+  local node="$1"
+  local param="$2"
+  local raw
+  raw="$(timeout 3 ros2 param get "${node}" "${param}" 2>/dev/null || true)"
+  echo "${raw}" | sed -nE 's/^String value is: (.*)$/\1/p; s/^value: (.*)$/\1/p' | tail -n1 | xargs
+}
+
+resolve_map_yaml_path() {
+  if [[ -n "${MAP_YAML_PATH}" && -f "${MAP_YAML_PATH}" ]]; then
+    return 0
+  fi
+  if [[ -n "${BRINGUP_MAP}" ]]; then
+    local p1="${WS_DIR}/src/rm_nav_bringup/map/${BRINGUP_MAP}.yaml"
+    local p2="${WS_DIR}/install/rm_nav_bringup/share/rm_nav_bringup/map/${BRINGUP_MAP}.yaml"
+    if [[ -f "${p1}" ]]; then
+      MAP_YAML_PATH="${p1}"
+      return 0
+    fi
+    if [[ -f "${p2}" ]]; then
+      MAP_YAML_PATH="${p2}"
+      return 0
+    fi
+  fi
+  local from_param
+  from_param="$(get_param_value /map_server yaml_filename)"
+  if [[ -n "${from_param}" && -f "${from_param}" ]]; then
+    MAP_YAML_PATH="${from_param}"
+    return 0
+  fi
+  return 1
+}
+
+probe_goal_occupancy() {
+  local x="$1"
+  local y="$2"
+  python3 "${WS_DIR}/tools/map_goal_probe.py" \
+    --map-yaml "${MAP_YAML_PATH}" \
+    --x "${x}" \
+    --y "${y}" \
+    --max-nearest-radius "${GOAL_NEAREST_RADIUS}"
+}
+
 if [[ "${LAUNCH_BRINGUP}" == "1" ]]; then
   if ros2 node list 2>/dev/null | grep -q .; then
     echo "[ERROR] ROS graph is not clean while LAUNCH_BRINGUP=1." >&2
@@ -191,6 +269,15 @@ if [[ "${LAUNCH_BRINGUP}" == "1" ]]; then
   fi
   echo "[1/5] Launch bringup (single entrypoint)"
   launch_cmd=(ros2 launch rm_nav_bringup bringup.launch.py "localization:=${LOCALIZATION}" "nav_rviz:=${NAV_RVIZ}")
+  if [[ -n "${BRINGUP_WORLD}" ]]; then
+    launch_cmd+=("world:=${BRINGUP_WORLD}")
+  fi
+  if [[ -n "${BRINGUP_MAP}" ]]; then
+    launch_cmd+=("map:=${BRINGUP_MAP}")
+  fi
+  if [[ -n "${BRINGUP_LIO}" ]]; then
+    launch_cmd+=("lio:=${BRINGUP_LIO}")
+  fi
   if [[ -n "${CONTROLLER}" ]]; then
     launch_cmd+=("controller:=${CONTROLLER}")
   fi
@@ -254,6 +341,18 @@ echo "  rounds=${ROUNDS}"
 echo "  goal_timeout=${GOAL_TIMEOUT}s"
 echo "  between_goals=${BETWEEN_GOALS_SEC}s"
 echo "  artifacts=${ARTIFACT_DIR}"
+echo "  goal_occupancy_policy=${GOAL_OCCUPANCY_POLICY}"
+echo "  goal_nearest_radius=${GOAL_NEAREST_RADIUS}m"
+
+invalid_goal_cnt=0
+if [[ "${GOAL_OCCUPANCY_POLICY}" != "off" ]]; then
+  if resolve_map_yaml_path; then
+    echo "  map_yaml=${MAP_YAML_PATH}"
+  else
+    echo "[WARN] goal occupancy checking enabled but map yaml not resolved, disable check." >&2
+    GOAL_OCCUPANCY_POLICY="off"
+  fi
+fi
 
 total=0
 succeeded=0
@@ -274,6 +373,46 @@ for ((round = 1; round <= ROUNDS; round++)); do
     IFS=',' read -r gx gy gqz gqw <<< "${wp}"
     gqz="${gqz:-0.0}"
     gqw="${gqw:-1.0}"
+
+    if [[ "${GOAL_OCCUPANCY_POLICY}" != "off" ]]; then
+      probe_out="$(probe_goal_occupancy "${gx}" "${gy}" 2>&1 || true)"
+      goal_status="$(echo "${probe_out}" | awk -F= '/^status=/{print $2}' | tail -n1)"
+      nearest_x="$(echo "${probe_out}" | awk -F= '/^nearest_free_x=/{print $2}' | tail -n1)"
+      nearest_y="$(echo "${probe_out}" | awk -F= '/^nearest_free_y=/{print $2}' | tail -n1)"
+      nearest_d="$(echo "${probe_out}" | awk -F= '/^nearest_free_dist=/{print $2}' | tail -n1)"
+      if [[ -z "${goal_status}" ]]; then
+        echo "[WARN] failed to probe goal occupancy at (${gx}, ${gy}), continue as-is"
+      elif [[ "${goal_status}" != "FREE" ]]; then
+        case "${GOAL_OCCUPANCY_POLICY}" in
+          warn)
+            echo "[WARN] goal (${gx}, ${gy}) status=${goal_status}; nearest free=(${nearest_x}, ${nearest_y}) d=${nearest_d}m"
+            ;;
+          reject)
+            invalid_goal_cnt=$((invalid_goal_cnt + 1))
+            echo "[goal skip] (${gx}, ${gy}) status=${goal_status}; nearest free=(${nearest_x}, ${nearest_y}) d=${nearest_d}m"
+            continue
+            ;;
+          snap)
+            if [[ -n "${nearest_x}" && -n "${nearest_y}" ]]; then
+              echo "[goal snap] (${gx}, ${gy}) status=${goal_status} -> (${nearest_x}, ${nearest_y}) d=${nearest_d}m"
+              gx="${nearest_x}"
+              gy="${nearest_y}"
+            else
+              invalid_goal_cnt=$((invalid_goal_cnt + 1))
+              echo "[goal skip] (${gx}, ${gy}) status=${goal_status}; no nearest free found within ${GOAL_NEAREST_RADIUS}m"
+              continue
+            fi
+            ;;
+          *)
+            echo "[WARN] unknown GOAL_OCCUPANCY_POLICY=${GOAL_OCCUPANCY_POLICY}, treat as warn"
+            ;;
+        esac
+      fi
+    fi
+
+    if [[ "${CLEAR_COSTMAP_BEFORE_GOAL}" == "1" && "${total}" -gt 0 ]]; then
+      clear_costmaps
+    fi
 
     total=$((total + 1))
     goal_log="${ARTIFACT_DIR}/goal_r${round}_p$((idx + 1)).log"
@@ -320,6 +459,7 @@ succeeded=${succeeded}
 aborted=${aborted}
 timeout=${timeout_cnt}
 other_fail=${other_fail}
+invalid_goal_skipped=${invalid_goal_cnt}
 success_rate_percent=${success_rate}
 avg_duration_sec=${avg_duration}
 EOF
