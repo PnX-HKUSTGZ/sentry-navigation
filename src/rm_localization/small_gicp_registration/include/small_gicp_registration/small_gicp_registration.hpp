@@ -125,6 +125,8 @@ private:
   geometry_msgs::msg::TransformStamped map_to_odom_;
   Eigen::Isometry3d last_map_to_laser_{Eigen::Isometry3d::Identity()};
   bool has_last_map_to_laser_{false};
+  Eigen::Isometry3d last_laser_to_odom_{Eigen::Isometry3d::Identity()};
+  bool has_last_laser_to_odom_{false};
   
   // Configuration parameters
   std::filesystem::path pcd_path_;

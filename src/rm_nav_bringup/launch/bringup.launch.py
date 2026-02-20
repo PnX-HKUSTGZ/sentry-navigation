@@ -46,6 +46,10 @@ def _launch_setup(context, *args, **kwargs):
     if controller_override:
         os.environ['RM_NAV_CONTROLLER'] = controller_override
 
+    lidar_noise_override = LaunchConfiguration('lidar_noise_stddev').perform(context).strip()
+    if lidar_noise_override:
+        os.environ['RM_NAV_LIDAR_NOISE_STDDEV'] = lidar_noise_override
+
     nav_start_delay_override = LaunchConfiguration('nav_start_delay').perform(context).strip()
 
     # 从 common 模块导入所有必要的变量和节点定义（导入时会读取 RM_NAV_MAP / RM_NAV_LOCALIZATION 覆盖）
@@ -193,7 +197,11 @@ def _launch_setup(context, *args, **kwargs):
             ) from exc
     else:
         # 仿真场景中 Gazebo 与机器人 spawn 通常慢于 Nav2，短延迟可避免 bt_navigator 配置超时。
-        nav_start_delay = 8.0 if use_sim else 0.0
+        # ICP/Small-GICP 需要等待首帧配准并发布 map->odom，给更保守的默认延迟。
+        if use_sim and localization in ("icp", "small_gicp"):
+            nav_start_delay = 12.0
+        else:
+            nav_start_delay = 8.0 if use_sim else 0.0
 
     if nav_start_delay > 0.0:
         print(f"   Navigation2 将在 {nav_start_delay:.1f}s 后启动（等待仿真/TF稳定）...")
@@ -248,6 +256,17 @@ def generate_launch_description():
         )
     )
 
+    ld.add_action(
+        DeclareLaunchArgument(
+            'lidar_noise_stddev',
+            default_value='',
+            description=(
+                'Gazebo lidar Gaussian noise stddev override. '
+                'If empty, uses config/launch_params.yaml.'
+            )
+        )
+    )
+
     # 允许在命令行覆盖：ros2 launch rm_nav_bringup bringup.launch.py nav_rviz:=false
     ld.add_action(
         DeclareLaunchArgument(
@@ -261,7 +280,10 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'nav_start_delay',
             default_value='',
-            description='Delay Navigation2 startup in seconds. Empty uses auto policy (sim=8.0, real=0.0).'
+            description=(
+                'Delay Navigation2 startup in seconds. Empty uses auto policy '
+                '(sim=8.0, sim+icp/small_gicp=12.0, real=0.0).'
+            )
         )
     )
 

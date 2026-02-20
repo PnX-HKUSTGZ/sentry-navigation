@@ -10,8 +10,9 @@
     max_dist_to_line: 0.1
 
     sensor_height: 0.275
-    min_slope: -0.4
-    max_slope: 0.4
+    # Match left lidar settings to avoid false obstacle marking on ramps/waves.
+    min_slope: -1.2
+    max_slope: 1.2
     max_fit_error: 0.05
     long_threshold: 1.0
     max_long_height: 0.1

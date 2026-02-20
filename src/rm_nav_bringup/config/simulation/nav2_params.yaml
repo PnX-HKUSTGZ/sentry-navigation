@@ -52,7 +52,8 @@ bt_navigator:
     use_sim_time: True
     global_frame: map
     robot_base_frame: base_link
-    odom_topic: /ground_truth/odom
+    # FAST-LIO2 odometry topic
+    odom_topic: /Odometry
     bt_loop_duration: 10
     default_server_timeout: 20
     plugin_lib_names:
@@ -91,7 +92,8 @@ bt_navigator:
 controller_server:
   ros__parameters:
     use_sim_time: True
-    odom_topic: /ground_truth/odom
+    # FAST-LIO2 odometry topic
+    odom_topic: /Odometry
     controller_frequency: 20.0
     min_x_velocity_threshold: 0.001
     min_y_velocity_threshold: 0.05
@@ -395,5 +397,6 @@ velocity_smoother:
     velocity_timeout: 1.0
     max_accel: [1.8, 1.8, 2.5]
     max_decel: [-1.8, -1.8, -2.5]
-    odom_topic: "/ground_truth/odom"
+    # FAST-LIO2 odometry topic
+    odom_topic: "/Odometry"
     odom_duration: 0.1

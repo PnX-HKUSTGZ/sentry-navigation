@@ -460,83 +460,105 @@ std::vector<Eigen::Isometry3d> SmallGicpNode::generateCandidatePoses(
 }
 
 void SmallGicpNode::publishTransform(const Eigen::Isometry3d& map_to_laser) {
+  Eigen::Isometry3d laser_to_odom = Eigen::Isometry3d::Identity();
+  bool fresh_laser_to_odom = false;
+
   try {
     // 获取laser到odom的变换
     auto transform_stamped = tf_buffer_->lookupTransform(
         laser_frame_id_, range_odom_frame_id_, rclcpp::Time(0), rclcpp::Duration::from_seconds(1.0));
-    
-    // 转换为Eigen格式
-    Eigen::Isometry3d laser_to_odom = Eigen::Isometry3d::Identity();
-    laser_to_odom.translation() = Eigen::Vector3d(
-        transform_stamped.transform.translation.x,
-        transform_stamped.transform.translation.y,
-        transform_stamped.transform.translation.z
-    );
-    laser_to_odom.linear() = Eigen::Quaterniond(
-        transform_stamped.transform.rotation.w,
-        transform_stamped.transform.rotation.x,
-        transform_stamped.transform.rotation.y,
-        transform_stamped.transform.rotation.z
-    ).toRotationMatrix();
+    laser_to_odom = transformStampedToEigen(transform_stamped);
+    fresh_laser_to_odom = true;
+  } catch (tf2::TransformException &ex) {
+    RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,
+                         "Transform lookup failed, trying cached fallback: %s", ex.what());
+  }
 
-    // 计算map到odom的变换
-    Eigen::Isometry3d map_to_odom = map_to_laser * laser_to_odom;
+  if (!fresh_laser_to_odom) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (has_last_laser_to_odom_) {
+      laser_to_odom = last_laser_to_odom_;
+      RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                           "Using cached laser->odom fallback for map->odom publishing");
+    } else {
+      // Bootstrap fallback: even when odom TF is not ready yet, publish a usable map->odom.
+      laser_to_odom = Eigen::Isometry3d::Identity();
+      RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                           "Using identity laser->odom fallback for bootstrap");
+    }
+  }
 
-    // 转换并发布TF
+  // 计算map到odom的变换
+  Eigen::Isometry3d map_to_odom = map_to_laser * laser_to_odom;
+  geometry_msgs::msg::TransformStamped map_to_odom_msg;
+  {
     std::lock_guard<std::mutex> lock(mutex_);
     last_map_to_laser_ = map_to_laser;
     has_last_map_to_laser_ = true;
+    if (fresh_laser_to_odom) {
+      last_laser_to_odom_ = laser_to_odom;
+      has_last_laser_to_odom_ = true;
+    }
     map_to_odom_ = eigenToTransformStamped(
         map_to_odom,
         map_frame_id_,
         odom_frame_id_,
         this->get_clock()->now() + rclcpp::Duration::from_seconds(tf_future_tolerance_));
-    
-    tf_broadcaster_->sendTransform(map_to_odom_);
-    
-  } catch (tf2::TransformException &ex) {
-    RCLCPP_ERROR(this->get_logger(), "Transform lookup failed: %s", ex.what());
+    map_to_odom_msg = map_to_odom_;
   }
+  tf_broadcaster_->sendTransform(map_to_odom_msg);
 }
 
 void SmallGicpNode::publishPredictedTransformFromOdom() {
   Eigen::Isometry3d map_to_laser = Eigen::Isometry3d::Identity();
+  Eigen::Isometry3d cached_laser_to_odom = Eigen::Isometry3d::Identity();
+  bool has_cached_laser_to_odom = false;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!has_last_map_to_laser_) {
       return;
     }
     map_to_laser = last_map_to_laser_;
+    has_cached_laser_to_odom = has_last_laser_to_odom_;
+    if (has_cached_laser_to_odom) {
+      cached_laser_to_odom = last_laser_to_odom_;
+    }
   }
 
+  Eigen::Isometry3d laser_to_odom = Eigen::Isometry3d::Identity();
+  bool fresh_laser_to_odom = false;
   try {
     auto transform_stamped = tf_buffer_->lookupTransform(
         laser_frame_id_, range_odom_frame_id_, rclcpp::Time(0), rclcpp::Duration::from_seconds(0.2));
-    Eigen::Isometry3d laser_to_odom = Eigen::Isometry3d::Identity();
-    laser_to_odom.translation() = Eigen::Vector3d(
-        transform_stamped.transform.translation.x,
-        transform_stamped.transform.translation.y,
-        transform_stamped.transform.translation.z
-    );
-    laser_to_odom.linear() = Eigen::Quaterniond(
-        transform_stamped.transform.rotation.w,
-        transform_stamped.transform.rotation.x,
-        transform_stamped.transform.rotation.y,
-        transform_stamped.transform.rotation.z
-    ).toRotationMatrix();
+    laser_to_odom = transformStampedToEigen(transform_stamped);
+    fresh_laser_to_odom = true;
+  } catch (tf2::TransformException &ex) {
+    if (!has_cached_laser_to_odom) {
+      RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                           "Predictive TF fallback failed and no cache available: %s", ex.what());
+      return;
+    }
+    laser_to_odom = cached_laser_to_odom;
+    RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                         "Predictive TF fallback using cached laser->odom: %s", ex.what());
+  }
 
-    Eigen::Isometry3d map_to_odom = map_to_laser * laser_to_odom;
+  Eigen::Isometry3d map_to_odom = map_to_laser * laser_to_odom;
+  geometry_msgs::msg::TransformStamped map_to_odom_msg;
+  {
     std::lock_guard<std::mutex> lock(mutex_);
+    if (fresh_laser_to_odom) {
+      last_laser_to_odom_ = laser_to_odom;
+      has_last_laser_to_odom_ = true;
+    }
     map_to_odom_ = eigenToTransformStamped(
         map_to_odom,
         map_frame_id_,
         odom_frame_id_,
         this->get_clock()->now() + rclcpp::Duration::from_seconds(tf_future_tolerance_));
-    tf_broadcaster_->sendTransform(map_to_odom_);
-  } catch (tf2::TransformException &ex) {
-    RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-                         "Predictive TF fallback failed: %s", ex.what());
+    map_to_odom_msg = map_to_odom_;
   }
+  tf_broadcaster_->sendTransform(map_to_odom_msg);
 }
 
 geometry_msgs::msg::TransformStamped SmallGicpNode::eigenToTransformStamped(

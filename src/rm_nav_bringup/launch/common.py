@@ -57,6 +57,19 @@ _env_localization = os.environ.get("RM_NAV_LOCALIZATION", "").strip()
 localization = _env_localization if _env_localization else launch_params.get("localization", "slam_toolbox")  # 获取定位模式 (amcl/slam_toolbox/icp)
 _env_controller = os.environ.get("RM_NAV_CONTROLLER", "").strip()
 controller = _env_controller if _env_controller else launch_params.get("controller", "teb")  # 局部控制器 (teb/dwb)
+_env_lidar_noise_stddev = os.environ.get("RM_NAV_LIDAR_NOISE_STDDEV", "").strip()
+try:
+    lidar_noise_stddev = (
+        float(_env_lidar_noise_stddev)
+        if _env_lidar_noise_stddev
+        else float(launch_params.get("lidar_noise_stddev", 0.002))
+    )
+except ValueError as exc:
+    raise ValueError(
+        f"无效的 lidar_noise_stddev: {_env_lidar_noise_stddev or launch_params.get('lidar_noise_stddev')}"
+    ) from exc
+if lidar_noise_stddev < 0.0:
+    raise ValueError(f"lidar_noise_stddev 必须 >= 0.0，当前: {lidar_noise_stddev}")
 use_sim = launch_params.get("use_sim", False)  # 是否使用仿真，默认为False
 use_sim_time = LaunchConfiguration(
     'use_sim_time',
@@ -111,6 +124,7 @@ print(f"  LIO算法: {lio}")
 print(f"  定位方法: {localization}")
 print(f"  局部控制器: {controller}")
 print(f"  仿真模式: {use_sim}")
+print(f"  激光噪声标准差: {lidar_noise_stddev}")
 print(f"  LIO可视化: {use_lio_rviz}")
 print(f"  双雷达: {dual_lidar_enable}")
 print(f"  Nav2消费右雷达: {dual_lidar_nav2_consume_right}")
@@ -142,6 +156,8 @@ if use_sim:
             right_lidar_pose["xyz"],
             " right_rpy:=",
             right_lidar_pose["rpy"],
+            " lidar_noise_stddev:=",
+            str(lidar_noise_stddev),
         ]
     )
 else:
@@ -371,7 +387,10 @@ if localization == "slam_toolbox" and not slam_map_exists:
 if localization == "icp" and not icp_map_exists:
     print(f"[警告] 选择了 ICP 定位，但未找到 PCD 地图: {icp_pcd_dir}，将跳过 ICP 节点启动，仅启动 map_server（如有）。")
 if localization == "small_gicp" and not small_gicp_map_exists:
-    print(f"[警告] 选择了 Small-GICP 定位，但未找到 PCD 地图: {small_gicp_pcd_dir}，将跳过 Small-GICP 节点启动，仅启动 map_server（如有）。")
+    raise FileNotFoundError(
+        f"选择了 Small-GICP 定位，但未找到 PCD 地图: {small_gicp_pcd_dir}。"
+        " 请先补齐地图资源后再启动。"
+    )
 if (localization in ["amcl", "slam_toolbox"] or mode == "nav") and not nav2_map_exists:
     print(f"[警告] 未找到 Nav2 地图 YAML: {nav2_map_dir}，Map Server 可能启动失败。")
 

@@ -19,9 +19,12 @@ USE_ROBOSTACK="${USE_ROBOSTACK:-0}"
 ACTION_NAME="${ACTION_NAME:-}"
 CONTROLLER="${CONTROLLER:-}"
 NAV_START_DELAY="${NAV_START_DELAY:-}"
+LIDAR_NOISE_STDDEV="${LIDAR_NOISE_STDDEV:-}"
 STARTUP_SETTLE_SEC="${STARTUP_SETTLE_SEC:-3}"
 ACTION_WAIT_TIMEOUT="${ACTION_WAIT_TIMEOUT:-90}"
 MAP_TF_WAIT_TIMEOUT="${MAP_TF_WAIT_TIMEOUT:-45}"
+MAP_TF_STABLE_SAMPLES="${MAP_TF_STABLE_SAMPLES:-3}"
+MAP_TF_REQUIRED="${MAP_TF_REQUIRED:-}"
 BRINGUP_WORLD="${BRINGUP_WORLD:-}"
 BRINGUP_MAP="${BRINGUP_MAP:-}"
 BRINGUP_LIO="${BRINGUP_LIO:-}"
@@ -66,8 +69,11 @@ if [[ "${DRY_RUN}" == "1" ]]; then
   echo "  map_yaml_path=${MAP_YAML_PATH:-<auto>}"
   echo "  controller=${CONTROLLER:-<default>}"
   echo "  nav_start_delay=${NAV_START_DELAY:-<auto>}"
+  echo "  lidar_noise_stddev=${LIDAR_NOISE_STDDEV:-<config default>}"
   echo "  action_wait_timeout=${ACTION_WAIT_TIMEOUT}s"
   echo "  map_tf_wait_timeout=${MAP_TF_WAIT_TIMEOUT}s"
+  echo "  map_tf_stable_samples=${MAP_TF_STABLE_SAMPLES}"
+  echo "  map_tf_required=${MAP_TF_REQUIRED:-<auto>}"
   echo "  nav_rviz=${NAV_RVIZ}"
   echo "  init_pose=(${INIT_X}, ${INIT_Y}, ${INIT_QZ}, ${INIT_QW})"
   echo "  waypoints=${WAYPOINTS}"
@@ -125,6 +131,14 @@ EOF
 
 setup_ros_env
 
+if [[ -z "${MAP_TF_REQUIRED}" ]]; then
+  if [[ "${LOCALIZATION}" == "icp" || "${LOCALIZATION}" == "small_gicp" ]]; then
+    MAP_TF_REQUIRED=1
+  else
+    MAP_TF_REQUIRED=0
+  fi
+fi
+
 # Validate occupancy policy early.
 case "${GOAL_OCCUPANCY_POLICY}" in
   off|warn|reject|snap) ;;
@@ -181,13 +195,29 @@ wait_for_amcl_pose() {
   return 1
 }
 
-wait_for_map_tf() {
+has_map_odom_tf_once() {
+  timeout 1 ros2 topic echo /tf --once 2>/dev/null \
+    | awk '
+      /frame_id: map/ {map=1}
+      /child_frame_id: odom/ {odom=1}
+      END {exit !(map && odom)}
+    '
+}
+
+wait_for_map_tf_stable() {
   local timeout_s="$1"
+  local stable_samples="$2"
   local loops=$((timeout_s * 2))
+  local consecutive=0
   local i
   for ((i = 1; i <= loops; i++)); do
-    if timeout 1 ros2 topic echo /tf --once 2>/dev/null | grep -q "frame_id: map"; then
-      return 0
+    if has_map_odom_tf_once; then
+      consecutive=$((consecutive + 1))
+      if [[ "${consecutive}" -ge "${stable_samples}" ]]; then
+        return 0
+      fi
+    else
+      consecutive=0
     fi
     sleep 0.5
   done
@@ -284,6 +314,9 @@ if [[ "${LAUNCH_BRINGUP}" == "1" ]]; then
   if [[ -n "${NAV_START_DELAY}" ]]; then
     launch_cmd+=("nav_start_delay:=${NAV_START_DELAY}")
   fi
+  if [[ -n "${LIDAR_NOISE_STDDEV}" ]]; then
+    launch_cmd+=("lidar_noise_stddev:=${LIDAR_NOISE_STDDEV}")
+  fi
   "${launch_cmd[@]}" > "${ARTIFACT_DIR}/bringup.log" 2>&1 &
   BRINGUP_PID=$!
 fi
@@ -322,11 +355,15 @@ if [[ "${STARTUP_SETTLE_SEC}" != "0" ]]; then
   sleep "${STARTUP_SETTLE_SEC}"
 fi
 if [[ "${LOCALIZATION}" == "icp" || "${LOCALIZATION}" == "small_gicp" ]]; then
-  echo "[INFO] Wait for map TF (frame_id=map), timeout=${MAP_TF_WAIT_TIMEOUT}s"
-  if wait_for_map_tf "${MAP_TF_WAIT_TIMEOUT}"; then
-    echo "[INFO] map TF detected."
+  echo "[INFO] Wait for stable map->odom TF, timeout=${MAP_TF_WAIT_TIMEOUT}s, required_samples=${MAP_TF_STABLE_SAMPLES}"
+  if wait_for_map_tf_stable "${MAP_TF_WAIT_TIMEOUT}" "${MAP_TF_STABLE_SAMPLES}"; then
+    echo "[INFO] stable map->odom TF detected."
   else
-    echo "[WARN] map TF not detected before timeout; continuing to send goals." >&2
+    if [[ "${MAP_TF_REQUIRED}" == "1" ]]; then
+      echo "[ERROR] stable map->odom TF not detected before timeout." >&2
+      exit 4
+    fi
+    echo "[WARN] stable map->odom TF not detected before timeout; continuing by policy." >&2
   fi
 fi
 

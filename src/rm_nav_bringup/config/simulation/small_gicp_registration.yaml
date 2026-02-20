@@ -8,6 +8,7 @@
     odom_frame_id: "odom"
     range_odom_frame_id: "lidar_odom"
     laser_frame_id: "livox_frame"
+    # Keep runtime bounded for startup registration.
     downsampling_resolution: 0.35
     max_correspondence_distance: 1.0
     num_threads: 4
@@ -16,6 +17,7 @@
     tf_future_tolerance: 0.2
     xy_search_range: 0.0
     yaw_search_range: 0.0
-    xy_step: 0.1
-    yaw_step: 10.0
+    # Larger candidate steps reduce bootstrap latency when initial search is auto-expanded.
+    xy_step: 0.2
+    yaw_step: 20.0
     initial_pose: [-5.0, 3.0, 0.0, 0.0, 0.0, 0.0]

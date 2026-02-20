@@ -37,6 +37,7 @@ CONTROLLER=teb \
 BRINGUP_WORLD=RMUL_26_WAVE \
 BRINGUP_MAP=RMUL26_WAVE \
 BRINGUP_LIO=fastlio \
+LIDAR_NOISE_STDDEV=0.006 \
 NAV_RVIZ=false \
 STARTUP_SETTLE_SEC=5 \
 ACTION_WAIT_TIMEOUT=300 \
@@ -51,6 +52,8 @@ bash tools/stress_dynamic_nav.sh
 
 - `GOAL_OCCUPANCY_POLICY=snap` 可自动把落在障碍/未知栅格的目标点吸附到最近自由栅格，减少“坏点”导致的假失败。
 - 若只想严格过滤（不自动改点），改为 `GOAL_OCCUPANCY_POLICY=reject`。
+- `LIDAR_NOISE_STDDEV` 用于注入 Mid360 高斯噪声（默认 `0.002`）。
+- `LOCALIZATION=small_gicp` 时，脚本会等待 `map->odom` 连续可用（`MAP_TF_STABLE_SAMPLES`）后再发首个 goal。
 
 ## 3. 测试结果（2026-02-19）
 

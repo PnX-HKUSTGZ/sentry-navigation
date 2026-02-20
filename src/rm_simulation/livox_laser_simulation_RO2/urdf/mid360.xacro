@@ -22,7 +22,7 @@
     </inertial>
   </xacro:macro>
 
-  <xacro:macro name="mid360" params="name:='' parent:= 'base_link' topic:='mid360' *origin ">
+  <xacro:macro name="mid360" params="name:='' parent:= 'base_link' topic:='mid360' noise_mean:='0.0' noise_stddev:='0.002' *origin ">
 
     <link name="${name}">
       <visual>
@@ -83,4 +83,3 @@
   </xacro:macro>
 
 </robot>
-
