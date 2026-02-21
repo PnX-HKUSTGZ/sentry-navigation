@@ -123,10 +123,8 @@ private:
   
   // Transform data
   geometry_msgs::msg::TransformStamped map_to_odom_;
-  Eigen::Isometry3d last_map_to_laser_{Eigen::Isometry3d::Identity()};
-  bool has_last_map_to_laser_{false};
-  Eigen::Isometry3d last_laser_to_odom_{Eigen::Isometry3d::Identity()};
-  bool has_last_laser_to_odom_{false};
+  Eigen::Isometry3d last_base_to_odom_{Eigen::Isometry3d::Identity()};
+  bool has_last_base_to_odom_{false};
   
   // Configuration parameters
   std::filesystem::path pcd_path_;
@@ -134,15 +132,32 @@ private:
   std::string odom_frame_id_;
   std::string range_odom_frame_id_;
   std::string laser_frame_id_;
+  std::string active_cloud_frame_id_;
   std::string pointcloud_topic_;
+  std::string registration_type_;
   
   // Registration parameters
   double downsampling_resolution_;
+  double source_downsampling_resolution_;
   double max_correspondence_distance_;
   int num_threads_;
   double convergence_threshold_;
   int max_iterations_;
   double tf_future_tolerance_;
+  double max_acceptable_fitness_score_;
+  double initialpose_wait_timeout_sec_;
+  double min_initialpose_interval_sec_;
+  int bootstrap_skip_scans_;
+  int bootstrap_skip_remaining_;
+  int min_source_points_for_registration_;
+  bool planarize_reference_map_;
+  bool planarize_source_scan_;
+  int recovery_trigger_failures_;
+  double recovery_xy_search_range_;
+  double recovery_yaw_search_range_;
+  double recovery_max_correspondence_distance_;
+  double recovery_acceptable_fitness_score_;
+  int consecutive_registration_failures_{0};
   
   // Multi-candidate search parameters
   double xy_search_range_;
@@ -161,6 +176,9 @@ private:
   bool is_initialized_;
   bool map_loaded_;
   bool first_scan_;
+  rclcpp::Time startup_time_;
+  rclcpp::Time last_initialpose_time_;
+  bool has_received_initialpose_{false};
   double last_registration_score_;
 };
 

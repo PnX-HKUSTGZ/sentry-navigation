@@ -10,6 +10,7 @@ WS_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 
 ROUNDS="${ROUNDS:-2}"
 GOAL_TIMEOUT="${GOAL_TIMEOUT:-90}"
+TIMEOUT_RETRY_COUNT="${TIMEOUT_RETRY_COUNT:-1}"
 BETWEEN_GOALS_SEC="${BETWEEN_GOALS_SEC:-1}"
 LAUNCH_BRINGUP="${LAUNCH_BRINGUP:-0}"
 LOCALIZATION="${LOCALIZATION:-amcl}"
@@ -32,10 +33,26 @@ MAP_TF_REQUIRED="${MAP_TF_REQUIRED:-}"
 BRINGUP_WORLD="${BRINGUP_WORLD:-}"
 BRINGUP_MAP="${BRINGUP_MAP:-}"
 BRINGUP_LIO="${BRINGUP_LIO:-}"
+BAG_RECORD="${BAG_RECORD:-0}"
+BAG_TOPICS="${BAG_TOPICS:-/clock /tf /tf_static /livox/lidar/pointcloud /Odometry /initialpose}"
+BAG_STORAGE="${BAG_STORAGE:-sqlite3}"
+BAG_OUTPUT="${BAG_OUTPUT:-}"
 CLEAR_COSTMAP_BEFORE_GOAL="${CLEAR_COSTMAP_BEFORE_GOAL:-0}"
 GOAL_OCCUPANCY_POLICY="${GOAL_OCCUPANCY_POLICY:-reject}"  # off|warn|reject|snap
 GOAL_NEAREST_RADIUS="${GOAL_NEAREST_RADIUS:-1.5}"
 MAP_YAML_PATH="${MAP_YAML_PATH:-}"
+
+# ICP/small-gicp need extra bootstrap time for map->odom before Nav2 lifecycle bringup.
+if [[ -z "${NAV_START_DELAY}" ]]; then
+  if [[ "${LOCALIZATION}" == "icp" || "${LOCALIZATION}" == "small_gicp" ]]; then
+    NAV_START_DELAY=18
+  fi
+fi
+if [[ "${LOCALIZATION}" == "icp" || "${LOCALIZATION}" == "small_gicp" ]]; then
+  if [[ "${ACTION_WAIT_TIMEOUT}" -lt 150 ]]; then
+    ACTION_WAIT_TIMEOUT=150
+  fi
+fi
 
 INIT_X="${INIT_X:--5.0}"
 INIT_Y="${INIT_Y:-3.0}"
@@ -61,6 +78,7 @@ if [[ "${DRY_RUN}" == "1" ]]; then
   echo "[DRY_RUN] stress_dynamic_nav.sh"
   echo "  rounds=${ROUNDS}"
   echo "  goal_timeout=${GOAL_TIMEOUT}s"
+  echo "  timeout_retry_count=${TIMEOUT_RETRY_COUNT}"
   echo "  launch_bringup=${LAUNCH_BRINGUP}"
   echo "  use_robostack=${USE_ROBOSTACK}"
   echo "  localization=${LOCALIZATION}"
@@ -81,6 +99,10 @@ if [[ "${DRY_RUN}" == "1" ]]; then
   echo "  map_tf_wait_timeout=${MAP_TF_WAIT_TIMEOUT}s"
   echo "  map_tf_stable_samples=${MAP_TF_STABLE_SAMPLES}"
   echo "  map_tf_required=${MAP_TF_REQUIRED:-<auto>}"
+  echo "  bag_record=${BAG_RECORD}"
+  echo "  bag_topics=${BAG_TOPICS}"
+  echo "  bag_storage=${BAG_STORAGE}"
+  echo "  bag_output=${BAG_OUTPUT:-<artifact>/rosbag_dataset}"
   echo "  nav_rviz=${NAV_RVIZ}"
   echo "  init_pose=(${INIT_X}, ${INIT_Y}, ${INIT_QZ}, ${INIT_QW})"
   echo "  waypoints=${WAYPOINTS}"
@@ -138,6 +160,9 @@ EOF
 
 setup_ros_env
 
+# Avoid ros2cli daemon cache hangs under frequent multi-domain stress loops.
+export ROS2CLI_NO_DAEMON=1
+
 if [[ -z "${MAP_TF_REQUIRED}" ]]; then
   if [[ "${LOCALIZATION}" == "icp" || "${LOCALIZATION}" == "small_gicp" ]]; then
     MAP_TF_REQUIRED=1
@@ -160,8 +185,15 @@ ros2 daemon stop >/dev/null 2>&1 || true
 ros2 daemon start >/dev/null 2>&1 || true
 
 BRINGUP_PID=""
+BAG_PID=""
 
 cleanup() {
+  if [[ -n "${BAG_PID}" ]] && kill -0 "${BAG_PID}" 2>/dev/null; then
+    echo "[cleanup] stopping rosbag recorder pgid=${BAG_PID}" >&2
+    kill -- "-${BAG_PID}" 2>/dev/null || kill "${BAG_PID}" 2>/dev/null || true
+    sleep 1
+    kill -9 -- "-${BAG_PID}" 2>/dev/null || kill -9 "${BAG_PID}" 2>/dev/null || true
+  fi
   if [[ -n "${BRINGUP_PID}" ]] && kill -0 "${BRINGUP_PID}" 2>/dev/null; then
     echo "[cleanup] stopping bringup process group pgid=${BRINGUP_PID}" >&2
     # bringup is launched with setsid, so killing by negative pid cleans all children.
@@ -176,13 +208,15 @@ wait_for_action() {
   local timeout_s="$1"
   local loops=$((timeout_s * 2))
   local i
+  local action_list
   for ((i = 1; i <= loops; i++)); do
+    action_list="$(timeout 2 ros2 action list 2>/dev/null || true)"
     if [[ -n "${ACTION_NAME}" ]]; then
-      if ros2 action list 2>/dev/null | grep -qx "${ACTION_NAME}"; then
+      if echo "${action_list}" | grep -qx "${ACTION_NAME}"; then
         return 0
       fi
     else
-      ACTION_NAME="$(ros2 action list 2>/dev/null | grep -E '(^|/)navigate_to_pose$' | head -n 1 || true)"
+      ACTION_NAME="$(echo "${action_list}" | grep -E '(^|/)navigate_to_pose$' | head -n 1 || true)"
       if [[ -n "${ACTION_NAME}" ]]; then
         return 0
       fi
@@ -428,6 +462,20 @@ if [[ "${LAUNCH_BRINGUP}" == "1" ]]; then
   BRINGUP_PID=$!
 fi
 
+if [[ "${BAG_RECORD}" == "1" ]]; then
+  if [[ -z "${BAG_OUTPUT}" ]]; then
+    BAG_OUTPUT="${ARTIFACT_DIR}/rosbag_dataset"
+  fi
+  mkdir -p "$(dirname "${BAG_OUTPUT}")"
+  rm -rf "${BAG_OUTPUT}"
+  echo "[bag] recording topics: ${BAG_TOPICS}"
+  echo "[bag] output: ${BAG_OUTPUT}"
+  setsid ros2 bag record --storage "${BAG_STORAGE}" -o "${BAG_OUTPUT}" ${BAG_TOPICS} \
+    > "${ARTIFACT_DIR}/rosbag_record.log" 2>&1 &
+  BAG_PID=$!
+  sleep 1
+fi
+
 echo "[2/5] Publish /initialpose (BEST_EFFORT + VOLATILE)"
 publish_initialpose
 if wait_for_amcl_pose 8; then
@@ -513,6 +561,9 @@ if [[ "${LOCALIZATION}" == "icp" || "${LOCALIZATION}" == "small_gicp" ]]; then
   echo "[INFO] Wait for stable map->odom TF, timeout=${MAP_TF_WAIT_TIMEOUT}s, required_samples=${MAP_TF_STABLE_SAMPLES}"
   if wait_for_map_tf_stable "${MAP_TF_WAIT_TIMEOUT}" "${MAP_TF_STABLE_SAMPLES}"; then
     echo "[INFO] stable map->odom TF detected."
+    echo "[INFO] Re-publish /initialpose after stable map->odom"
+    publish_initialpose
+    sleep 1
   else
     if [[ "${MAP_TF_REQUIRED}" == "1" ]]; then
       echo "[ERROR] stable map->odom TF not detected before timeout." >&2
@@ -531,6 +582,7 @@ fi
 echo "[4/5] Start stress run"
 echo "  rounds=${ROUNDS}"
 echo "  goal_timeout=${GOAL_TIMEOUT}s"
+echo "  timeout_retry_count=${TIMEOUT_RETRY_COUNT}"
 echo "  between_goals=${BETWEEN_GOALS_SEC}s"
 echo "  artifacts=${ARTIFACT_DIR}"
 echo "  goal_occupancy_policy=${GOAL_OCCUPANCY_POLICY}"
@@ -610,18 +662,32 @@ for ((round = 1; round <= ROUNDS; round++)); do
     goal_log="${ARTIFACT_DIR}/goal_r${round}_p$((idx + 1)).log"
     start_ns="$(date +%s%N)"
 
-    set +e
-    timeout --signal=TERM --kill-after=5 "${GOAL_TIMEOUT}" ros2 action send_goal "${ACTION_NAME}" nav2_msgs/action/NavigateToPose \
-      "{pose: {header: {frame_id: 'map', stamp: {sec: 0, nanosec: 0}}, pose: {position: {x: ${gx}, y: ${gy}, z: 0.0}, orientation: {x: 0.0, y: 0.0, z: ${gqz}, w: ${gqw}}}}}" \
-      > "${goal_log}" 2>&1
-    rc=$?
-    set -e
+    rc=0
+    attempt=0
+    current_goal_log="${goal_log}"
+    while :; do
+      set +e
+      timeout --signal=TERM --kill-after=5 "${GOAL_TIMEOUT}" ros2 action send_goal "${ACTION_NAME}" nav2_msgs/action/NavigateToPose \
+        "{pose: {header: {frame_id: 'map', stamp: {sec: 0, nanosec: 0}}, pose: {position: {x: ${gx}, y: ${gy}, z: 0.0}, orientation: {x: 0.0, y: 0.0, z: ${gqz}, w: ${gqw}}}}}" \
+        > "${current_goal_log}" 2>&1
+      rc=$?
+      set -e
+
+      if [[ "${rc}" -eq 124 && "${attempt}" -lt "${TIMEOUT_RETRY_COUNT}" ]]; then
+        attempt=$((attempt + 1))
+        current_goal_log="${goal_log}.retry${attempt}"
+        echo "[WARN] goal (${gx}, ${gy}) timeout on attempt ${attempt}, retrying..."
+        sleep 0.2
+        continue
+      fi
+      break
+    done
 
     end_ns="$(date +%s%N)"
     duration_sec="$(awk "BEGIN{printf \"%.3f\", (${end_ns}-${start_ns})/1000000000}")"
     duration_sum="$(awk "BEGIN{printf \"%.3f\", ${duration_sum}+${duration_sec}}")"
 
-    status_line="$(grep -E 'Goal finished with status:' "${goal_log}" | tail -n 1 || true)"
+    status_line="$(grep -E 'Goal finished with status:' "${current_goal_log}" | tail -n 1 || true)"
     if [[ "${rc}" -eq 124 ]]; then
       timeout_cnt=$((timeout_cnt + 1))
       result="TIMEOUT"
@@ -654,6 +720,8 @@ other_fail=${other_fail}
 invalid_goal_skipped=${invalid_goal_cnt}
 success_rate_percent=${success_rate}
 avg_duration_sec=${avg_duration}
+bag_record=${BAG_RECORD}
+bag_output=${BAG_OUTPUT}
 EOF
 
 echo "[5/5] Summary"
