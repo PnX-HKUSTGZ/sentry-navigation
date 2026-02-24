@@ -38,17 +38,33 @@ world = _env_world if _env_world else launch_params.get("world", "RMUL")  # 仿�
 _env_map_name = os.environ.get("RM_NAV_MAP", "").strip()
 map_name = _env_map_name if _env_map_name else world
 
+def _resolve_resource_with_compact_fallback(resource_dir: str, resource_name: str, suffix: str, *, allow_fallback: bool):
+    """Resolve {resource_name}{suffix}; optionally fallback to name without underscores."""
+    preferred_path = os.path.join(resource_dir, resource_name + suffix)
+    if os.path.exists(preferred_path):
+        return resource_name, preferred_path
+
+    if allow_fallback and "_" in resource_name:
+        compact_name = resource_name.replace("_", "")
+        compact_path = os.path.join(resource_dir, compact_name + suffix)
+        if os.path.exists(compact_path):
+            return compact_name, compact_path
+
+    return resource_name, preferred_path
+
+
 # 兼容：有些 world 名称含下划线（如 RMUL_26），但 map 资源文件可能不含下划线（如 RMUL26.yaml）。
 # 仅当未显式指定 map override 时启用回退，避免掩盖用户输入错误。
-if not _env_map_name:
-    map_dir = os.path.join(rm_nav_bringup_dir, "map")
-    preferred_map_yaml = os.path.join(map_dir, map_name + ".yaml")
-    if not os.path.exists(preferred_map_yaml) and "_" in map_name:
-        fallback = map_name.replace("_", "")
-        fallback_map_yaml = os.path.join(map_dir, fallback + ".yaml")
-        if os.path.exists(fallback_map_yaml):
-            print(f"[信息] 未找到地图资源 {map_name}.yaml，回退使用 {fallback}.yaml")
-            map_name = fallback
+map_dir = os.path.join(rm_nav_bringup_dir, "map")
+resolved_map_name, _ = _resolve_resource_with_compact_fallback(
+    map_dir,
+    map_name,
+    ".yaml",
+    allow_fallback=not _env_map_name,
+)
+if resolved_map_name != map_name:
+    print(f"[信息] 未找到地图资源 {map_name}.yaml，回退使用 {resolved_map_name}.yaml")
+    map_name = resolved_map_name
 
 mode = launch_params.get("mode", "nav")  # 获取运行模式 (mapping/nav)，默认为nav
 _env_lio = os.environ.get("RM_NAV_LIO", "").strip()
@@ -361,13 +377,22 @@ nav2_params_file_dir = _get_nav2_params_file(
 )
 
 # =============================== icp_registration parameters ==============================
-icp_pcd_dir = os.path.join(rm_nav_bringup_dir, "PCD", map_name + ".pcd")
+pcd_dir = os.path.join(rm_nav_bringup_dir, "PCD")
+pcd_map_name, resolved_pcd_path = _resolve_resource_with_compact_fallback(
+    pcd_dir,
+    map_name,
+    ".pcd",
+    allow_fallback=not _env_map_name,
+)
+if pcd_map_name != map_name:
+    print(f"[信息] 未找到点云地图 {map_name}.pcd，回退使用 {pcd_map_name}.pcd")
+icp_pcd_dir = resolved_pcd_path
 icp_registration_params_dir = os.path.join(
     config_dir, "icp_registration.yaml"
 )
 
 # ============================= small_gicp_registration parameters ========================
-small_gicp_pcd_dir = os.path.join(rm_nav_bringup_dir, "PCD", map_name + ".pcd")
+small_gicp_pcd_dir = resolved_pcd_path
 small_gicp_registration_params_dir = os.path.join(
     config_dir, "small_gicp_registration.yaml"
 )

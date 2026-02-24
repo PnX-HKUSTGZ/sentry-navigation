@@ -25,11 +25,13 @@ STARTUP_SETTLE_SEC="${STARTUP_SETTLE_SEC:-3}"
 ACTION_WAIT_TIMEOUT="${ACTION_WAIT_TIMEOUT:-90}"
 AMCL_POSE_WAIT_TIMEOUT="${AMCL_POSE_WAIT_TIMEOUT:-25}"
 ODOM_WAIT_TIMEOUT="${ODOM_WAIT_TIMEOUT:-35}"
-ODOM_TOPIC="${ODOM_TOPIC:-auto}"  # auto => probe /Odometry -> /ground_truth/odom -> /odom
-ODOM_TOPIC_CANDIDATES="${ODOM_TOPIC_CANDIDATES:-/Odometry /ground_truth/odom /odom}"
+ODOM_TOPIC="${ODOM_TOPIC:-auto}"  # auto => probe /Odometry -> /odom (ground truth fallback is opt-in)
+ODOM_TOPIC_CANDIDATES="${ODOM_TOPIC_CANDIDATES:-/Odometry /odom}"
+ALLOW_GROUND_TRUTH_ODOM_FALLBACK="${ALLOW_GROUND_TRUTH_ODOM_FALLBACK:-0}"
 MAP_TF_WAIT_TIMEOUT="${MAP_TF_WAIT_TIMEOUT:-45}"
 MAP_TF_STABLE_SAMPLES="${MAP_TF_STABLE_SAMPLES:-3}"
 MAP_TF_REQUIRED="${MAP_TF_REQUIRED:-}"
+MAP_TF_PRE_ACTION_CHECK="${MAP_TF_PRE_ACTION_CHECK:-}"
 BRINGUP_WORLD="${BRINGUP_WORLD:-}"
 BRINGUP_MAP="${BRINGUP_MAP:-}"
 BRINGUP_LIO="${BRINGUP_LIO:-}"
@@ -51,6 +53,11 @@ fi
 if [[ "${LOCALIZATION}" == "icp" || "${LOCALIZATION}" == "small_gicp" ]]; then
   if [[ "${ACTION_WAIT_TIMEOUT}" -lt 150 ]]; then
     ACTION_WAIT_TIMEOUT=150
+  fi
+fi
+if [[ "${ALLOW_GROUND_TRUTH_ODOM_FALLBACK}" == "1" ]]; then
+  if [[ " ${ODOM_TOPIC_CANDIDATES} " != *" /ground_truth/odom "* ]]; then
+    ODOM_TOPIC_CANDIDATES="${ODOM_TOPIC_CANDIDATES} /ground_truth/odom"
   fi
 fi
 
@@ -96,9 +103,11 @@ if [[ "${DRY_RUN}" == "1" ]]; then
   echo "  amcl_pose_wait_timeout=${AMCL_POSE_WAIT_TIMEOUT}s"
   echo "  odom_wait_timeout=${ODOM_WAIT_TIMEOUT}s"
   echo "  odom_topic=${ODOM_TOPIC} (candidates: ${ODOM_TOPIC_CANDIDATES})"
+  echo "  allow_ground_truth_odom_fallback=${ALLOW_GROUND_TRUTH_ODOM_FALLBACK}"
   echo "  map_tf_wait_timeout=${MAP_TF_WAIT_TIMEOUT}s"
   echo "  map_tf_stable_samples=${MAP_TF_STABLE_SAMPLES}"
   echo "  map_tf_required=${MAP_TF_REQUIRED:-<auto>}"
+  echo "  map_tf_pre_action_check=${MAP_TF_PRE_ACTION_CHECK:-<auto>}"
   echo "  bag_record=${BAG_RECORD}"
   echo "  bag_topics=${BAG_TOPICS}"
   echo "  bag_storage=${BAG_STORAGE}"
@@ -170,6 +179,13 @@ if [[ -z "${MAP_TF_REQUIRED}" ]]; then
     MAP_TF_REQUIRED=0
   fi
 fi
+if [[ -z "${MAP_TF_PRE_ACTION_CHECK}" ]]; then
+  if [[ "${LOCALIZATION}" == "icp" || "${LOCALIZATION}" == "small_gicp" ]]; then
+    MAP_TF_PRE_ACTION_CHECK=1
+  else
+    MAP_TF_PRE_ACTION_CHECK=0
+  fi
+fi
 
 # Validate occupancy policy early.
 case "${GOAL_OCCUPANCY_POLICY}" in
@@ -186,6 +202,7 @@ ros2 daemon start >/dev/null 2>&1 || true
 
 BRINGUP_PID=""
 BAG_PID=""
+MAP_TF_READY=0
 
 cleanup() {
   if [[ -n "${BAG_PID}" ]] && kill -0 "${BAG_PID}" 2>/dev/null; then
@@ -484,6 +501,23 @@ else
   echo "[WARN] /amcl_pose not observed yet; continue waiting for Nav2 action server." >&2
 fi
 
+if [[ "${LOCALIZATION}" == "icp" || "${LOCALIZATION}" == "small_gicp" ]] && [[ "${MAP_TF_PRE_ACTION_CHECK}" == "1" ]]; then
+  echo "[INFO] Pre-action gate: wait for stable map->odom TF, timeout=${MAP_TF_WAIT_TIMEOUT}s, required_samples=${MAP_TF_STABLE_SAMPLES}"
+  if wait_for_map_tf_stable "${MAP_TF_WAIT_TIMEOUT}" "${MAP_TF_STABLE_SAMPLES}"; then
+    MAP_TF_READY=1
+    echo "[INFO] stable map->odom TF detected before action wait."
+    echo "[INFO] Re-publish /initialpose after pre-action map->odom gate"
+    publish_initialpose_once
+    sleep 1
+  else
+    if [[ "${MAP_TF_REQUIRED}" == "1" ]]; then
+      echo "[ERROR] stable map->odom TF not detected in pre-action gate." >&2
+      exit 4
+    fi
+    echo "[WARN] stable map->odom TF not detected in pre-action gate; continuing by policy." >&2
+  fi
+fi
+
 echo "[3/5] Wait for /navigate_to_pose action server"
 if ! wait_for_action "${ACTION_WAIT_TIMEOUT}"; then
   if [[ "${LOCALIZATION}" == "icp" || "${LOCALIZATION}" == "small_gicp" ]]; then
@@ -558,18 +592,23 @@ if [[ "${STARTUP_SETTLE_SEC}" != "0" ]]; then
   sleep "${STARTUP_SETTLE_SEC}"
 fi
 if [[ "${LOCALIZATION}" == "icp" || "${LOCALIZATION}" == "small_gicp" ]]; then
-  echo "[INFO] Wait for stable map->odom TF, timeout=${MAP_TF_WAIT_TIMEOUT}s, required_samples=${MAP_TF_STABLE_SAMPLES}"
-  if wait_for_map_tf_stable "${MAP_TF_WAIT_TIMEOUT}" "${MAP_TF_STABLE_SAMPLES}"; then
-    echo "[INFO] stable map->odom TF detected."
-    echo "[INFO] Re-publish /initialpose after stable map->odom"
-    publish_initialpose
-    sleep 1
+  if [[ "${MAP_TF_READY}" == "1" ]]; then
+    echo "[INFO] map->odom TF already stabilized in pre-action stage."
   else
-    if [[ "${MAP_TF_REQUIRED}" == "1" ]]; then
-      echo "[ERROR] stable map->odom TF not detected before timeout." >&2
-      exit 4
+    echo "[INFO] Wait for stable map->odom TF, timeout=${MAP_TF_WAIT_TIMEOUT}s, required_samples=${MAP_TF_STABLE_SAMPLES}"
+    if wait_for_map_tf_stable "${MAP_TF_WAIT_TIMEOUT}" "${MAP_TF_STABLE_SAMPLES}"; then
+      MAP_TF_READY=1
+      echo "[INFO] stable map->odom TF detected."
+      echo "[INFO] Re-publish /initialpose after stable map->odom"
+      publish_initialpose
+      sleep 1
+    else
+      if [[ "${MAP_TF_REQUIRED}" == "1" ]]; then
+        echo "[ERROR] stable map->odom TF not detected before timeout." >&2
+        exit 4
+      fi
+      echo "[WARN] stable map->odom TF not detected before timeout; continuing by policy." >&2
     fi
-    echo "[WARN] stable map->odom TF not detected before timeout; continuing by policy." >&2
   fi
 fi
 
