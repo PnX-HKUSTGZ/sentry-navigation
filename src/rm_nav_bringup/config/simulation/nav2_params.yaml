@@ -268,7 +268,7 @@ local_costmap:
       width: 6
       height: 6
       resolution: 0.02
-      robot_radius: 0.28
+      robot_radius: 0.24
       plugins: ["obstacle_layer", "inflation_layer"]
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
@@ -277,9 +277,9 @@ local_costmap:
         scan:
           topic: /scan
           expected_update_rate: 0.0
-          observation_persistence: 0.6
+          observation_persistence: 0.2
           raytrace_max_range: 6.0
-          obstacle_max_range: 5.5
+          obstacle_max_range: 3.5
           obstacle_min_range: 0.1
           max_obstacle_height: 2.0
           clearing: true
@@ -299,8 +299,8 @@ local_costmap:
           data_type: "PointCloud2"
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 3.0
-        inflation_radius: 0.8
+        cost_scaling_factor: 4.5
+        inflation_radius: 0.45
       always_send_full_costmap: true
 
 global_costmap:
@@ -311,10 +311,12 @@ global_costmap:
       global_frame: map
       robot_base_frame: base_link
       use_sim_time: True
-      robot_radius: 0.28
+      robot_radius: 0.24
       resolution: 0.04
       track_unknown_space: true
-      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
+      # Keep global planning primarily static-map-driven to avoid scan-noise-induced
+      # long "no valid path found" streaks on wave terrain.
+      plugins: ["static_layer", "inflation_layer"]
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
         footprint_clearing_enabled: True
@@ -326,9 +328,9 @@ global_costmap:
         scan:
           topic: /scan
           expected_update_rate: 0.0
-          observation_persistence: 0.8
+          observation_persistence: 0.2
           raytrace_max_range: 6.0
-          obstacle_max_range: 5.5
+          obstacle_max_range: 3.5
           obstacle_min_range: 0.1
           max_obstacle_height: 2.0
           clearing: true
@@ -337,8 +339,8 @@ global_costmap:
           data_type: "LaserScan"
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 6.0
-        inflation_radius: 0.9
+        cost_scaling_factor: 5.5
+        inflation_radius: 0.40
       always_send_full_costmap: True
 
 map_saver:

@@ -11,6 +11,9 @@ WS_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 ROUNDS="${ROUNDS:-2}"
 GOAL_TIMEOUT="${GOAL_TIMEOUT:-90}"
 TIMEOUT_RETRY_COUNT="${TIMEOUT_RETRY_COUNT:-1}"
+ABORT_RETRY_COUNT="${ABORT_RETRY_COUNT:-}"
+RELOCALIZE_ON_ABORT="${RELOCALIZE_ON_ABORT:-}"
+CLEAR_COSTMAP_ON_ABORT="${CLEAR_COSTMAP_ON_ABORT:-1}"
 BETWEEN_GOALS_SEC="${BETWEEN_GOALS_SEC:-1}"
 LAUNCH_BRINGUP="${LAUNCH_BRINGUP:-0}"
 LOCALIZATION="${LOCALIZATION:-amcl}"
@@ -43,6 +46,28 @@ CLEAR_COSTMAP_BEFORE_GOAL="${CLEAR_COSTMAP_BEFORE_GOAL:-0}"
 GOAL_OCCUPANCY_POLICY="${GOAL_OCCUPANCY_POLICY:-reject}"  # off|warn|reject|snap
 GOAL_NEAREST_RADIUS="${GOAL_NEAREST_RADIUS:-1.5}"
 MAP_YAML_PATH="${MAP_YAML_PATH:-}"
+DYNAMIC_OBS_ENABLE="${DYNAMIC_OBS_ENABLE:-0}"
+DYNAMIC_OBS_MODE="${DYNAMIC_OBS_MODE:-cloud}"  # cloud|gazebo
+DYNAMIC_OBS_NAME="${DYNAMIC_OBS_NAME:-dyn_obs_cross_1}"
+DYNAMIC_OBS_START_X="${DYNAMIC_OBS_START_X:--4.7}"
+DYNAMIC_OBS_START_Y="${DYNAMIC_OBS_START_Y:-2.5}"
+DYNAMIC_OBS_END_X="${DYNAMIC_OBS_END_X:--4.7}"
+DYNAMIC_OBS_END_Y="${DYNAMIC_OBS_END_Y:-4.1}"
+DYNAMIC_OBS_Z="${DYNAMIC_OBS_Z:-0.35}"
+DYNAMIC_OBS_SIZE_X="${DYNAMIC_OBS_SIZE_X:-0.35}"
+DYNAMIC_OBS_SIZE_Y="${DYNAMIC_OBS_SIZE_Y:-0.35}"
+DYNAMIC_OBS_SIZE_Z="${DYNAMIC_OBS_SIZE_Z:-0.70}"
+DYNAMIC_OBS_PERIOD_SEC="${DYNAMIC_OBS_PERIOD_SEC:-6.0}"
+DYNAMIC_OBS_DT_SEC="${DYNAMIC_OBS_DT_SEC:-0.08}"
+DYNAMIC_OBS_RATE_HZ="${DYNAMIC_OBS_RATE_HZ:-12.0}"
+DYNAMIC_OBS_FRAME_ID="${DYNAMIC_OBS_FRAME_ID:-map}"
+DYNAMIC_OBS_TOPIC="${DYNAMIC_OBS_TOPIC:-/segmentation/obstacle_right}"
+DYNAMIC_OBS_RADIUS="${DYNAMIC_OBS_RADIUS:-0.22}"
+DYNAMIC_OBS_GRID_STEP="${DYNAMIC_OBS_GRID_STEP:-0.06}"
+DYNAMIC_OBS_REFERENCE_FRAME="${DYNAMIC_OBS_REFERENCE_FRAME:-world}"
+DYNAMIC_OBS_SPAWN_SERVICE="${DYNAMIC_OBS_SPAWN_SERVICE:-/spawn_entity}"
+DYNAMIC_OBS_SET_SERVICE="${DYNAMIC_OBS_SET_SERVICE:-/gazebo/set_entity_state}"
+DYNAMIC_OBS_DELETE_SERVICE="${DYNAMIC_OBS_DELETE_SERVICE:-/delete_entity}"
 
 # ICP/small-gicp need extra bootstrap time for map->odom before Nav2 lifecycle bringup.
 if [[ -z "${NAV_START_DELAY}" ]]; then
@@ -55,16 +80,31 @@ if [[ "${LOCALIZATION}" == "icp" || "${LOCALIZATION}" == "small_gicp" ]]; then
     ACTION_WAIT_TIMEOUT=150
   fi
 fi
+if [[ -z "${ABORT_RETRY_COUNT}" ]]; then
+  if [[ "${LOCALIZATION}" == "icp" || "${LOCALIZATION}" == "small_gicp" ]]; then
+    ABORT_RETRY_COUNT=1
+  else
+    ABORT_RETRY_COUNT=0
+  fi
+fi
+if [[ -z "${RELOCALIZE_ON_ABORT}" ]]; then
+  if [[ "${LOCALIZATION}" == "icp" || "${LOCALIZATION}" == "small_gicp" ]]; then
+    RELOCALIZE_ON_ABORT=1
+  else
+    RELOCALIZE_ON_ABORT=0
+  fi
+fi
 if [[ "${ALLOW_GROUND_TRUTH_ODOM_FALLBACK}" == "1" ]]; then
   if [[ " ${ODOM_TOPIC_CANDIDATES} " != *" /ground_truth/odom "* ]]; then
     ODOM_TOPIC_CANDIDATES="${ODOM_TOPIC_CANDIDATES} /ground_truth/odom"
   fi
 fi
 
-INIT_X="${INIT_X:--5.0}"
-INIT_Y="${INIT_Y:-3.0}"
-INIT_QZ="${INIT_QZ:-0.0}"
-INIT_QW="${INIT_QW:-1.0}"
+# Default to RMUL_26 simulation spawn pose to reduce bootstrap mismatch.
+INIT_X="${INIT_X:--5.375}"
+INIT_Y="${INIT_Y:-3.425}"
+INIT_QZ="${INIT_QZ:--0.2798765}"
+INIT_QW="${INIT_QW:-0.9600360}"
 
 # x,y,qz,qw; x,y,qz,qw; ...
 WAYPOINTS="${WAYPOINTS:--5.0,3.0,0.0,1.0; -2.0,2.0,0.0,1.0; 0.0,0.0,0.0,1.0; 1.8,-1.2,0.0,1.0; -0.8,0.8,0.0,1.0; -5.0,3.0,0.0,1.0}"
@@ -86,6 +126,9 @@ if [[ "${DRY_RUN}" == "1" ]]; then
   echo "  rounds=${ROUNDS}"
   echo "  goal_timeout=${GOAL_TIMEOUT}s"
   echo "  timeout_retry_count=${TIMEOUT_RETRY_COUNT}"
+  echo "  abort_retry_count=${ABORT_RETRY_COUNT}"
+  echo "  relocalize_on_abort=${RELOCALIZE_ON_ABORT}"
+  echo "  clear_costmap_on_abort=${CLEAR_COSTMAP_ON_ABORT}"
   echo "  launch_bringup=${LAUNCH_BRINGUP}"
   echo "  use_robostack=${USE_ROBOSTACK}"
   echo "  localization=${LOCALIZATION}"
@@ -108,6 +151,13 @@ if [[ "${DRY_RUN}" == "1" ]]; then
   echo "  map_tf_stable_samples=${MAP_TF_STABLE_SAMPLES}"
   echo "  map_tf_required=${MAP_TF_REQUIRED:-<auto>}"
   echo "  map_tf_pre_action_check=${MAP_TF_PRE_ACTION_CHECK:-<auto>}"
+  echo "  dynamic_obstacle_enable=${DYNAMIC_OBS_ENABLE}"
+  echo "  dynamic_obstacle_mode=${DYNAMIC_OBS_MODE}"
+  echo "  dynamic_obstacle_name=${DYNAMIC_OBS_NAME}"
+  echo "  dynamic_obstacle_track=(${DYNAMIC_OBS_START_X}, ${DYNAMIC_OBS_START_Y}) -> (${DYNAMIC_OBS_END_X}, ${DYNAMIC_OBS_END_Y})"
+  echo "  dynamic_obstacle_period=${DYNAMIC_OBS_PERIOD_SEC}s"
+  echo "  dynamic_obstacle_dt=${DYNAMIC_OBS_DT_SEC}s rate=${DYNAMIC_OBS_RATE_HZ}Hz"
+  echo "  dynamic_obstacle_topic=${DYNAMIC_OBS_TOPIC} frame=${DYNAMIC_OBS_FRAME_ID}"
   echo "  bag_record=${BAG_RECORD}"
   echo "  bag_topics=${BAG_TOPICS}"
   echo "  bag_storage=${BAG_STORAGE}"
@@ -202,9 +252,16 @@ ros2 daemon start >/dev/null 2>&1 || true
 
 BRINGUP_PID=""
 BAG_PID=""
+DYNAMIC_OBS_PID=""
 MAP_TF_READY=0
 
 cleanup() {
+  if [[ -n "${DYNAMIC_OBS_PID}" ]] && kill -0 "${DYNAMIC_OBS_PID}" 2>/dev/null; then
+    echo "[cleanup] stopping dynamic obstacle driver pgid=${DYNAMIC_OBS_PID}" >&2
+    kill -- "-${DYNAMIC_OBS_PID}" 2>/dev/null || kill "${DYNAMIC_OBS_PID}" 2>/dev/null || true
+    sleep 1
+    kill -9 -- "-${DYNAMIC_OBS_PID}" 2>/dev/null || kill -9 "${DYNAMIC_OBS_PID}" 2>/dev/null || true
+  fi
   if [[ -n "${BAG_PID}" ]] && kill -0 "${BAG_PID}" 2>/dev/null; then
     echo "[cleanup] stopping rosbag recorder pgid=${BAG_PID}" >&2
     kill -- "-${BAG_PID}" 2>/dev/null || kill "${BAG_PID}" 2>/dev/null || true
@@ -449,6 +506,68 @@ probe_goal_occupancy() {
     --max-nearest-radius "${GOAL_NEAREST_RADIUS}"
 }
 
+start_dynamic_obstacle() {
+  if [[ "${DYNAMIC_OBS_ENABLE}" != "1" ]]; then
+    return 0
+  fi
+  local dyn_script=""
+  local dyn_cmd=()
+  if [[ "${DYNAMIC_OBS_MODE}" == "cloud" ]]; then
+    dyn_script="${WS_DIR}/tools/dynamic_obstacle_cloud_publisher.py"
+    dyn_cmd=(
+      /usr/bin/python3 "${dyn_script}"
+      --topic "${DYNAMIC_OBS_TOPIC}"
+      --frame-id "${DYNAMIC_OBS_FRAME_ID}"
+      --start-x "${DYNAMIC_OBS_START_X}"
+      --start-y "${DYNAMIC_OBS_START_Y}"
+      --end-x "${DYNAMIC_OBS_END_X}"
+      --end-y "${DYNAMIC_OBS_END_Y}"
+      --z "${DYNAMIC_OBS_Z}"
+      --radius "${DYNAMIC_OBS_RADIUS}"
+      --grid-step "${DYNAMIC_OBS_GRID_STEP}"
+      --period-sec "${DYNAMIC_OBS_PERIOD_SEC}"
+      --rate-hz "${DYNAMIC_OBS_RATE_HZ}"
+    )
+  elif [[ "${DYNAMIC_OBS_MODE}" == "gazebo" ]]; then
+    dyn_script="${WS_DIR}/tools/dynamic_obstacle_driver.py"
+    dyn_cmd=(
+      /usr/bin/python3 "${dyn_script}"
+      --name "${DYNAMIC_OBS_NAME}"
+      --start-x "${DYNAMIC_OBS_START_X}"
+      --start-y "${DYNAMIC_OBS_START_Y}"
+      --end-x "${DYNAMIC_OBS_END_X}"
+      --end-y "${DYNAMIC_OBS_END_Y}"
+      --z "${DYNAMIC_OBS_Z}"
+      --size-x "${DYNAMIC_OBS_SIZE_X}"
+      --size-y "${DYNAMIC_OBS_SIZE_Y}"
+      --size-z "${DYNAMIC_OBS_SIZE_Z}"
+      --period-sec "${DYNAMIC_OBS_PERIOD_SEC}"
+      --dt-sec "${DYNAMIC_OBS_DT_SEC}"
+      --reference-frame "${DYNAMIC_OBS_REFERENCE_FRAME}"
+      --spawn-service "${DYNAMIC_OBS_SPAWN_SERVICE}"
+      --set-service "${DYNAMIC_OBS_SET_SERVICE}"
+      --delete-service "${DYNAMIC_OBS_DELETE_SERVICE}"
+      --delete-on-exit
+    )
+  else
+    echo "[ERROR] unsupported DYNAMIC_OBS_MODE=${DYNAMIC_OBS_MODE}, expected cloud|gazebo" >&2
+    return 1
+  fi
+  if [[ ! -f "${dyn_script}" ]]; then
+    echo "[ERROR] dynamic obstacle script not found: ${dyn_script}" >&2
+    return 1
+  fi
+  echo "[INFO] Start dynamic obstacle driver (${DYNAMIC_OBS_MODE}): ${DYNAMIC_OBS_NAME}"
+  setsid "${dyn_cmd[@]}" > "${ARTIFACT_DIR}/dynamic_obstacle.log" 2>&1 &
+  DYNAMIC_OBS_PID=$!
+  sleep 1
+  if ! kill -0 "${DYNAMIC_OBS_PID}" 2>/dev/null; then
+    echo "[ERROR] dynamic obstacle driver exited early, see ${ARTIFACT_DIR}/dynamic_obstacle.log" >&2
+    return 1
+  fi
+  echo "[INFO] Dynamic obstacle active, log: ${ARTIFACT_DIR}/dynamic_obstacle.log"
+}
+
 if [[ "${LAUNCH_BRINGUP}" == "1" ]]; then
   if ros2 node list 2>/dev/null | grep -q .; then
     echo "[ERROR] ROS graph is not clean while LAUNCH_BRINGUP=1." >&2
@@ -612,10 +731,36 @@ if [[ "${LOCALIZATION}" == "icp" || "${LOCALIZATION}" == "small_gicp" ]]; then
   fi
 fi
 
+if ! start_dynamic_obstacle; then
+  exit 14
+fi
+
 IFS=';' read -r -a WAYPOINT_ARRAY <<< "${WAYPOINTS}"
 if [[ "${#WAYPOINT_ARRAY[@]}" -eq 0 ]]; then
   echo "[ERROR] WAYPOINTS is empty" >&2
   exit 5
+fi
+
+# Guard rail: repeated consecutive goals can trigger false timeout/progress failures.
+first_wp=""
+last_wp=""
+prev_wp=""
+for wp_raw in "${WAYPOINT_ARRAY[@]}"; do
+  wp_trim="$(echo "${wp_raw}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+  if [[ -z "${wp_trim}" ]]; then
+    continue
+  fi
+  if [[ -z "${first_wp}" ]]; then
+    first_wp="${wp_trim}"
+  fi
+  if [[ -n "${prev_wp}" && "${wp_trim}" == "${prev_wp}" ]]; then
+    echo "[WARN] consecutive duplicated waypoint detected: ${wp_trim}" >&2
+  fi
+  prev_wp="${wp_trim}"
+  last_wp="${wp_trim}"
+done
+if [[ "${ROUNDS}" -gt 1 && -n "${first_wp}" && -n "${last_wp}" && "${first_wp}" == "${last_wp}" ]]; then
+  echo "[WARN] first and last waypoint are identical; round-boundary duplicate goals may cause avoidable timeout." >&2
 fi
 
 echo "[4/5] Start stress run"
@@ -702,7 +847,8 @@ for ((round = 1; round <= ROUNDS; round++)); do
     start_ns="$(date +%s%N)"
 
     rc=0
-    attempt=0
+    timeout_attempt=0
+    abort_attempt=0
     current_goal_log="${goal_log}"
     while :; do
       set +e
@@ -712,10 +858,31 @@ for ((round = 1; round <= ROUNDS; round++)); do
       rc=$?
       set -e
 
-      if [[ "${rc}" -eq 124 && "${attempt}" -lt "${TIMEOUT_RETRY_COUNT}" ]]; then
-        attempt=$((attempt + 1))
-        current_goal_log="${goal_log}.retry${attempt}"
-        echo "[WARN] goal (${gx}, ${gy}) timeout on attempt ${attempt}, retrying..."
+      status_line="$(grep -E 'Goal finished with status:' "${current_goal_log}" | tail -n 1 || true)"
+
+      if [[ "${rc}" -eq 124 && "${timeout_attempt}" -lt "${TIMEOUT_RETRY_COUNT}" ]]; then
+        timeout_attempt=$((timeout_attempt + 1))
+        current_goal_log="${goal_log}.timeout_retry${timeout_attempt}"
+        echo "[WARN] goal (${gx}, ${gy}) timeout on attempt ${timeout_attempt}, retrying..."
+        sleep 0.2
+        continue
+      fi
+
+      if [[ "${status_line}" == *"ABORTED"* && "${abort_attempt}" -lt "${ABORT_RETRY_COUNT}" ]]; then
+        abort_attempt=$((abort_attempt + 1))
+        echo "[WARN] goal (${gx}, ${gy}) ABORTED on attempt ${abort_attempt}, relocalize+retry..."
+        if [[ "${CLEAR_COSTMAP_ON_ABORT}" == "1" ]]; then
+          clear_costmaps
+        fi
+        if [[ "${RELOCALIZE_ON_ABORT}" == "1" ]]; then
+          publish_initialpose
+          if [[ "${LOCALIZATION}" == "icp" || "${LOCALIZATION}" == "small_gicp" ]]; then
+            if ! wait_for_map_tf_stable "${MAP_TF_WAIT_TIMEOUT}" "${MAP_TF_STABLE_SAMPLES}"; then
+              echo "[WARN] map->odom not stable during abort retry gate, continue by policy." >&2
+            fi
+          fi
+        fi
+        current_goal_log="${goal_log}.abort_retry${abort_attempt}"
         sleep 0.2
         continue
       fi
@@ -726,7 +893,6 @@ for ((round = 1; round <= ROUNDS; round++)); do
     duration_sec="$(awk "BEGIN{printf \"%.3f\", (${end_ns}-${start_ns})/1000000000}")"
     duration_sum="$(awk "BEGIN{printf \"%.3f\", ${duration_sum}+${duration_sec}}")"
 
-    status_line="$(grep -E 'Goal finished with status:' "${current_goal_log}" | tail -n 1 || true)"
     if [[ "${rc}" -eq 124 ]]; then
       timeout_cnt=$((timeout_cnt + 1))
       result="TIMEOUT"

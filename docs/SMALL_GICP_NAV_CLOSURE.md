@@ -181,3 +181,109 @@ After tuning, these abort signatures disappeared in the 20-goal run above.
 - Keep `bringup.launch.py` as the only startup entrypoint.
 - Keep full chain `use_sim_time` enabled.
 - For replay/build scripts in mixed conda environments, prefer `/usr/bin/python3` to avoid `rclpy` ABI mismatch.
+
+## 6. 2026-02-25 Realistic-Chain Regression (small-gicp + DWB)
+
+This round uses a stricter "real-chain" setup:
+
+- odom from `/Odometry` (no default ground-truth fallback)
+- localization: `small_gicp`
+- controller: `dwb`
+- world/map: `RMUL_26_WAVE` / `RMUL26_WAVE`
+- lidar noise enabled
+- map->odom pre-action gate enabled
+
+### 6.1 Stable loop profile (21 goals)
+
+Command:
+
+```bash
+ART=artifacts/realstress_smallgicp_loop3_final_$(date +%Y%m%d_%H%M%S)
+WAYPOINTS='-5.6,3.3,0.0,1.0; -3.8,3.3,0.0,1.0; -4.6,1.8,0.0,1.0' \
+INIT_X=-5.375 INIT_Y=3.425 INIT_QZ=-0.2798765 INIT_QW=0.9600360 \
+ROUNDS=7 \
+GOAL_TIMEOUT=90 \
+BETWEEN_GOALS_SEC=0.5 \
+LAUNCH_BRINGUP=1 \
+LOCALIZATION=small_gicp \
+CONTROLLER=dwb \
+BRINGUP_WORLD=RMUL_26_WAVE \
+BRINGUP_MAP=RMUL26_WAVE \
+BRINGUP_LIO=fastlio \
+LIDAR_NOISE_STDDEV=0.004 \
+NAV_RVIZ=false \
+STARTUP_SETTLE_SEC=5 \
+ACTION_WAIT_TIMEOUT=300 \
+NAV_START_DELAY=22 \
+MAP_TF_REQUIRED=1 \
+MAP_TF_PRE_ACTION_CHECK=1 \
+GOAL_OCCUPANCY_POLICY=reject \
+CLEAR_COSTMAP_BEFORE_GOAL=1 \
+ARTIFACT_DIR=$ART \
+bash tools/stress_dynamic_nav.sh
+```
+
+Result:
+
+- `artifacts/realstress_smallgicp_loop3_final_20260225_010349`
+- `21/21`, success rate `100%`
+
+### 6.2 Higher-noise check (12 goals)
+
+Same profile with `LIDAR_NOISE_STDDEV=0.006`:
+
+- `artifacts/realstress_smallgicp_loop3_noise006_20260225_010822`
+- `11/12`, success rate `91.7%`
+- dominant miss type: timeout (no ABORT / no planner crash)
+
+### 6.3 Practical takeaways
+
+- Setting initial pose to simulation spawn (`-5.375, 3.425, qz=-0.2798765, qw=0.9600360`) removed frequent first-goal bootstrap misses.
+- The selected loop avoids round-boundary duplicate goals and gives stable, reproducible success in wave-road conditions.
+- For this wave scenario, global planning is more stable when it is static-map-driven, while dynamic obstacle reaction is left primarily to local costmap/controller.
+
+### 6.4 Dynamic-obstacle injection regression
+
+To validate dynamic obstacle avoidance without depending on Gazebo model-state services,
+inject a moving obstacle cloud into `/segmentation/obstacle_right` (consumed by local costmap obstacle layer):
+
+```bash
+ART=artifacts/realstress_smallgicp_dynobs_cloud_$(date +%Y%m%d_%H%M%S)
+WAYPOINTS='-5.6,3.3,0.0,1.0; -3.8,3.3,0.0,1.0' \
+ROUNDS=4 \
+GOAL_TIMEOUT=90 \
+BETWEEN_GOALS_SEC=0.5 \
+LAUNCH_BRINGUP=1 \
+LOCALIZATION=small_gicp \
+CONTROLLER=dwb \
+BRINGUP_WORLD=RMUL_26_WAVE \
+BRINGUP_MAP=RMUL26_WAVE \
+BRINGUP_LIO=fastlio \
+LIDAR_NOISE_STDDEV=0.004 \
+NAV_RVIZ=false \
+STARTUP_SETTLE_SEC=5 \
+ACTION_WAIT_TIMEOUT=300 \
+NAV_START_DELAY=22 \
+MAP_TF_REQUIRED=1 \
+MAP_TF_PRE_ACTION_CHECK=1 \
+GOAL_OCCUPANCY_POLICY=reject \
+CLEAR_COSTMAP_BEFORE_GOAL=1 \
+DYNAMIC_OBS_ENABLE=1 \
+DYNAMIC_OBS_MODE=cloud \
+DYNAMIC_OBS_NAME=dyn_obs_cross_lane \
+DYNAMIC_OBS_START_X=-4.7 DYNAMIC_OBS_START_Y=2.5 \
+DYNAMIC_OBS_END_X=-4.7 DYNAMIC_OBS_END_Y=4.1 \
+DYNAMIC_OBS_PERIOD_SEC=5.5 \
+DYNAMIC_OBS_RATE_HZ=14 \
+DYNAMIC_OBS_RADIUS=0.26 \
+DYNAMIC_OBS_GRID_STEP=0.05 \
+ARTIFACT_DIR=$ART \
+bash tools/stress_dynamic_nav.sh
+```
+
+Observed:
+
+- `artifacts/realstress_smallgicp_dynobs_mid_20260225_085546`
+- `6/6`, success rate `100%`
+- obstacle publisher log confirms dynamic cloud injection is active (`dynamic_obstacle.log`).
+- avg duration increased (dynamic obstacle interaction), no `ABORTED` / `TIMEOUT`.

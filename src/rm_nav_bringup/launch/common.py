@@ -378,12 +378,28 @@ nav2_params_file_dir = _get_nav2_params_file(
 
 # =============================== icp_registration parameters ==============================
 pcd_dir = os.path.join(rm_nav_bringup_dir, "PCD")
-pcd_map_name, resolved_pcd_path = _resolve_resource_with_compact_fallback(
-    pcd_dir,
-    map_name,
-    ".pcd",
-    allow_fallback=not _env_map_name,
-)
+
+# For small-gicp on wave maps, prefer dedicated rebuilt map-frame PCD when available.
+resolved_pcd_path = ""
+pcd_map_name = map_name
+if localization == "small_gicp" and not map_name.endswith("_SGICP_MAP"):
+    sgicp_companion_name = map_name + "_SGICP_MAP"
+    sgicp_companion_path = os.path.join(pcd_dir, sgicp_companion_name + ".pcd")
+    if os.path.exists(sgicp_companion_path):
+        pcd_map_name = sgicp_companion_name
+        resolved_pcd_path = sgicp_companion_path
+        print(
+            f"[信息] Small-GICP 检测到同名增强点云，优先使用 {pcd_map_name}.pcd"
+        )
+
+if not resolved_pcd_path:
+    pcd_map_name, resolved_pcd_path = _resolve_resource_with_compact_fallback(
+        pcd_dir,
+        map_name,
+        ".pcd",
+        allow_fallback=not _env_map_name,
+    )
+
 if pcd_map_name != map_name:
     print(f"[信息] 未找到点云地图 {map_name}.pcd，回退使用 {pcd_map_name}.pcd")
 icp_pcd_dir = resolved_pcd_path
