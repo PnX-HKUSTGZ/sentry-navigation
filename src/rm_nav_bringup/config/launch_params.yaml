@@ -14,6 +14,6 @@ localization: slam_toolbox
 mode: nav
 use_lio_rviz: false
 use_sim: true
-use_stvl: false
+use_stvl: true
 lidar_noise_stddev: 0.002
 world: RMUL_26

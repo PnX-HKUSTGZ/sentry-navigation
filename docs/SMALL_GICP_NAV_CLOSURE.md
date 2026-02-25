@@ -287,3 +287,69 @@ Observed:
 - `6/6`, success rate `100%`
 - obstacle publisher log confirms dynamic cloud injection is active (`dynamic_obstacle.log`).
 - avg duration increased (dynamic obstacle interaction), no `ABORTED` / `TIMEOUT`.
+
+### 6.5 STVL selection A/B (simulation global costmap)
+
+To compare static global map vs STVL global map under the same dynamic-obstacle setup:
+
+- Baseline: `NAV_USE_STVL=0` (global `static_layer + inflation_layer`)
+- Variant: `NAV_USE_STVL=1` (global `static_layer + stvl_layer + inflation_layer`)
+- Other settings unchanged: `small_gicp + DWB`, same waypoints, same noise and dynamic cloud profile.
+
+Command template (baseline / STVL only differ in `NAV_USE_STVL`):
+
+```bash
+ART=artifacts/realstress_smallgicp_dynobs20_${TAG}_$(date +%Y%m%d_%H%M%S)
+WAYPOINTS='-5.6,3.3,0.0,1.0; -3.8,3.3,0.0,1.0' \
+ROUNDS=10 \
+GOAL_TIMEOUT=90 \
+BETWEEN_GOALS_SEC=0.5 \
+LAUNCH_BRINGUP=1 \
+LOCALIZATION=small_gicp \
+CONTROLLER=dwb \
+BRINGUP_WORLD=RMUL_26_WAVE \
+BRINGUP_MAP=RMUL26_WAVE \
+BRINGUP_LIO=fastlio \
+LIDAR_NOISE_STDDEV=0.004 \
+NAV_RVIZ=false \
+STARTUP_SETTLE_SEC=8 \
+ACTION_WAIT_TIMEOUT=180 \
+NAV_START_DELAY=24 \
+MAP_TF_REQUIRED=1 \
+MAP_TF_PRE_ACTION_CHECK=1 \
+GOAL_OCCUPANCY_POLICY=reject \
+CLEAR_COSTMAP_BEFORE_GOAL=1 \
+DYNAMIC_OBS_ENABLE=1 \
+DYNAMIC_OBS_MODE=cloud \
+DYNAMIC_OBS_NAME=dyn_obs_cross_lane \
+DYNAMIC_OBS_START_X=-4.7 DYNAMIC_OBS_START_Y=2.5 \
+DYNAMIC_OBS_END_X=-4.7 DYNAMIC_OBS_END_Y=4.1 \
+DYNAMIC_OBS_PERIOD_SEC=5.5 \
+DYNAMIC_OBS_RATE_HZ=14 \
+DYNAMIC_OBS_RADIUS=0.26 \
+DYNAMIC_OBS_GRID_STEP=0.05 \
+NAV_USE_STVL=${NAV_USE_STVL} \
+ARTIFACT_DIR=$ART \
+bash tools/stress_dynamic_nav.sh
+```
+
+Results:
+
+- Baseline `NAV_USE_STVL=0`:
+  - `artifacts/realstress_smallgicp_dynobs20_baseline_20260225_094408`
+  - `20/20`, success `100%`
+  - `avg_duration_sec=15.405`
+  - timeout retries observed in goal logs: `2`
+- STVL `NAV_USE_STVL=1`:
+  - `artifacts/realstress_smallgicp_dynobs20_stvl_retry_20260225_130032`
+  - `20/20`, success `100%`
+  - `avg_duration_sec=5.191`
+  - timeout retries observed in goal logs: `0`
+
+Selection conclusion for current simulation profile:
+
+- Keep STVL as a selectable option (not hard-forced).
+- For this tested dynamic-cloud setup, `NAV_USE_STVL=1` is preferred:
+  - same success rate (`100%`)
+  - significantly lower average goal duration
+  - no timeout-retry events in the 20-goal run
