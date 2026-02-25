@@ -9,16 +9,15 @@
     odom_frame_id: "odom"
     range_odom_frame_id: "lidar_odom"
     laser_frame_id: "livox_frame"
-    # Keep runtime bounded for stress tests.
-    downsampling_resolution: 0.20
-    source_downsampling_resolution: 0.20
-    max_correspondence_distance: 3.0
+    # Keep runtime bounded while preserving enough geometry on wave road.
+    downsampling_resolution: 0.12
+    source_downsampling_resolution: 0.10
+    max_correspondence_distance: 2.0
     num_threads: 2
     convergence_threshold: 0.01
-    max_iterations: 12
-    # Be conservative on accepting registration updates to avoid map->odom jumps
-    # that can place the robot into lethal costmap cells.
-    max_acceptable_fitness_score: 0.25
+    max_iterations: 20
+    # Balance between anti-jump safety and short-window relocalization robustness.
+    max_acceptable_fitness_score: 0.30
     initialpose_wait_timeout_sec: 30.0
     min_initialpose_interval_sec: 0.8
     tf_future_tolerance: 0.2
@@ -26,13 +25,14 @@
     min_source_points_for_registration: 80
     planarize_reference_map: false
     planarize_source_scan: false
-    recovery_trigger_failures: 4
-    recovery_xy_search_range: 0.1
-    recovery_yaw_search_range: 15.0
-    recovery_max_correspondence_distance: 2.5
-    recovery_acceptable_fitness_score: 0.35
-    xy_search_range: 0.0
-    yaw_search_range: 0.0
+    recovery_trigger_failures: 2
+    recovery_xy_search_range: 0.35
+    recovery_yaw_search_range: 20.0
+    recovery_max_correspondence_distance: 3.2
+    recovery_acceptable_fitness_score: 0.50
+    # Add mild local search around odom-derived init guess.
+    xy_search_range: 0.10
+    yaw_search_range: 8.0
     xy_step: 0.1
-    yaw_step: 15.0
+    yaw_step: 8.0
     initial_pose: [-5.0, 3.0, 0.0, 0.0, 0.0, 0.0]

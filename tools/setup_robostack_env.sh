@@ -10,13 +10,28 @@ ENV_FILE="${WS_DIR}/environment.robostack.yml"
 RUN_ROSDEP="${RUN_ROSDEP:-0}"
 RUN_COLCON_BUILD="${RUN_COLCON_BUILD:-1}"
 ROBOSTACK_OFFLINE="${ROBOSTACK_OFFLINE:-0}"
-ROBOSTACK_SOLVER="${ROBOSTACK_SOLVER:-libmamba}"
+ROBOSTACK_SOLVER="${ROBOSTACK_SOLVER:-auto}"
 
 if ! command -v conda >/dev/null 2>&1; then
   echo "[ERROR] conda not found. Please install Miniconda/Anaconda first."
   exit 1
 fi
 CONDA_BIN="$(command -v conda)"
+
+pick_supported_solver() {
+  local help_out
+  help_out="$(CONDA_NO_PLUGINS=true "${CONDA_BIN}" --no-plugins env create --help 2>/dev/null || true)"
+  if echo "${help_out}" | grep -q "libmamba"; then
+    echo "libmamba"
+  else
+    echo "classic"
+  fi
+}
+
+if [ "${ROBOSTACK_SOLVER}" = "auto" ]; then
+  ROBOSTACK_SOLVER="$(pick_supported_solver)"
+  echo "[INFO] Auto-detected conda env solver: ${ROBOSTACK_SOLVER}"
+fi
 
 if [ ! -f "${ENV_FILE}" ]; then
   echo "[ERROR] Missing env file: ${ENV_FILE}"

@@ -50,6 +50,10 @@ def _launch_setup(context, *args, **kwargs):
     if lidar_noise_override:
         os.environ['RM_NAV_LIDAR_NOISE_STDDEV'] = lidar_noise_override
 
+    use_stvl_override = LaunchConfiguration('use_stvl').perform(context).strip()
+    if use_stvl_override:
+        os.environ['RM_NAV_USE_STVL'] = use_stvl_override
+
     nav_start_delay_override = LaunchConfiguration('nav_start_delay').perform(context).strip()
 
     # 从 common 模块导入所有必要的变量和节点定义（导入时会读取 RM_NAV_MAP / RM_NAV_LOCALIZATION 覆盖）
@@ -263,6 +267,17 @@ def generate_launch_description():
             description=(
                 'Gazebo lidar Gaussian noise stddev override. '
                 'If empty, uses config/launch_params.yaml.'
+            )
+        )
+    )
+
+    ld.add_action(
+        DeclareLaunchArgument(
+            'use_stvl',
+            default_value='',
+            description=(
+                'Enable/disable STVL overlay for simulation global costmap '
+                '(true|false). Empty uses config/launch_params.yaml.'
             )
         )
     )

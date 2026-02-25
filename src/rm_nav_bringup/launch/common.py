@@ -38,17 +38,43 @@ world = _env_world if _env_world else launch_params.get("world", "RMUL")  # 仿�
 _env_map_name = os.environ.get("RM_NAV_MAP", "").strip()
 map_name = _env_map_name if _env_map_name else world
 
+
+def _parse_bool_str(value: str, *, key: str) -> bool:
+    lowered = value.strip().lower()
+    if lowered in {"1", "true", "yes", "on"}:
+        return True
+    if lowered in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"无效的布尔参数 {key}: {value!r}. 允许值: 1/0/true/false/yes/no/on/off")
+
+
+def _resolve_resource_with_compact_fallback(resource_dir: str, resource_name: str, suffix: str, *, allow_fallback: bool):
+    """Resolve {resource_name}{suffix}; optionally fallback to name without underscores."""
+    preferred_path = os.path.join(resource_dir, resource_name + suffix)
+    if os.path.exists(preferred_path):
+        return resource_name, preferred_path
+
+    if allow_fallback and "_" in resource_name:
+        compact_name = resource_name.replace("_", "")
+        compact_path = os.path.join(resource_dir, compact_name + suffix)
+        if os.path.exists(compact_path):
+            return compact_name, compact_path
+
+    return resource_name, preferred_path
+
+
 # 兼容：有些 world 名称含下划线（如 RMUL_26），但 map 资源文件可能不含下划线（如 RMUL26.yaml）。
 # 仅当未显式指定 map override 时启用回退，避免掩盖用户输入错误。
-if not _env_map_name:
-    map_dir = os.path.join(rm_nav_bringup_dir, "map")
-    preferred_map_yaml = os.path.join(map_dir, map_name + ".yaml")
-    if not os.path.exists(preferred_map_yaml) and "_" in map_name:
-        fallback = map_name.replace("_", "")
-        fallback_map_yaml = os.path.join(map_dir, fallback + ".yaml")
-        if os.path.exists(fallback_map_yaml):
-            print(f"[信息] 未找到地图资源 {map_name}.yaml，回退使用 {fallback}.yaml")
-            map_name = fallback
+map_dir = os.path.join(rm_nav_bringup_dir, "map")
+resolved_map_name, _ = _resolve_resource_with_compact_fallback(
+    map_dir,
+    map_name,
+    ".yaml",
+    allow_fallback=not _env_map_name,
+)
+if resolved_map_name != map_name:
+    print(f"[信息] 未找到地图资源 {map_name}.yaml，回退使用 {resolved_map_name}.yaml")
+    map_name = resolved_map_name
 
 mode = launch_params.get("mode", "nav")  # 获取运行模式 (mapping/nav)，默认为nav
 _env_lio = os.environ.get("RM_NAV_LIO", "").strip()
@@ -58,6 +84,10 @@ localization = _env_localization if _env_localization else launch_params.get("lo
 _env_controller = os.environ.get("RM_NAV_CONTROLLER", "").strip()
 controller = _env_controller if _env_controller else launch_params.get("controller", "teb")  # 局部控制器 (teb/dwb)
 _env_lidar_noise_stddev = os.environ.get("RM_NAV_LIDAR_NOISE_STDDEV", "").strip()
+_env_use_stvl = os.environ.get("RM_NAV_USE_STVL", "").strip()
+use_stvl = _parse_bool_str(_env_use_stvl, key="RM_NAV_USE_STVL") if _env_use_stvl else bool(
+    launch_params.get("use_stvl", False)
+)
 try:
     lidar_noise_stddev = (
         float(_env_lidar_noise_stddev)
@@ -129,6 +159,7 @@ print(f"  LIO可视化: {use_lio_rviz}")
 print(f"  双雷达: {dual_lidar_enable}")
 print(f"  Nav2消费右雷达: {dual_lidar_nav2_consume_right}")
 print(f"  双雷达障碍融合模式: {dual_lidar_obstacle_fusion_mode}")
+print(f"  仿真全局代价地图STVL: {use_stvl}")
 
 if use_sim:
     config_dir = os.path.join(rm_nav_bringup_dir, "config", "simulation")
@@ -283,10 +314,17 @@ def _drop_dual_lidar_sources(nav2_params: dict) -> dict:
         if isinstance(stvl_observation_sources, str):
             stvl_layer["observation_sources"] = _drop_tokens(
                 stvl_observation_sources,
-                {"livox_right_mark", "livox_right_clear"},
+                {
+                    "livox_right_mark",
+                    "livox_right_clear",
+                    "lidar_right_mark",
+                    "lidar_right_clear",
+                },
             )
         stvl_layer.pop("livox_right_mark", None)
         stvl_layer.pop("livox_right_clear", None)
+        stvl_layer.pop("lidar_right_mark", None)
+        stvl_layer.pop("lidar_right_clear", None)
 
     return nav2_params
 
@@ -297,6 +335,7 @@ def _get_nav2_params_file(
     dual_lidar_enabled: bool,
     nav2_consume_right: bool,
     obstacle_fusion_mode: str,
+    use_stvl_global: bool,
 ) -> str:
     base_params = os.path.join(config_dir, "nav2_params.yaml")
     merged_params = _load_yaml(base_params)
@@ -310,6 +349,16 @@ def _get_nav2_params_file(
             merged_params,
             _load_yaml(overlay),
             replace_keys={'controller_server'},
+        )
+
+    if use_stvl_global:
+        stvl_overlay = os.path.join(config_dir, "nav2_global_stvl.yaml")
+        if not os.path.exists(stvl_overlay):
+            raise FileNotFoundError(f"Nav2 STVL overlay not found: {stvl_overlay}")
+        merged_params = _deep_merge(
+            merged_params,
+            _load_yaml(stvl_overlay),
+            replace_keys=set(),
         )
 
     # In single-lidar mode or merged-obstacle mode, Nav2 should not subscribe
@@ -326,6 +375,7 @@ def _get_nav2_params_file(
         and dual_lidar_enabled
         and nav2_consume_right
         and obstacle_fusion_mode != "merged"
+        and not use_stvl_global
     ):
         # Fast-path: base file already matches requested setup.
         return base_params
@@ -338,7 +388,7 @@ def _get_nav2_params_file(
             f"nav2_params_{'sim' if use_sim else 'real'}_{controller_type}_"
             f"{'dual' if dual_lidar_enabled else 'single'}_"
             f"{'consume_right' if nav2_consume_right else 'ignore_right'}_"
-            f"{obstacle_fusion_mode}.yaml"
+            f"{obstacle_fusion_mode}_{'stvl' if use_stvl_global else 'nostvl'}.yaml"
         )
     )
     with open(out_file, 'w', encoding='utf-8') as f:
@@ -358,16 +408,42 @@ nav2_params_file_dir = _get_nav2_params_file(
     dual_lidar_enable,
     dual_lidar_nav2_consume_right,
     dual_lidar_obstacle_fusion_mode,
+    use_stvl if use_sim else False,
 )
 
 # =============================== icp_registration parameters ==============================
-icp_pcd_dir = os.path.join(rm_nav_bringup_dir, "PCD", map_name + ".pcd")
+pcd_dir = os.path.join(rm_nav_bringup_dir, "PCD")
+
+# For small-gicp on wave maps, prefer dedicated rebuilt map-frame PCD when available.
+resolved_pcd_path = ""
+pcd_map_name = map_name
+if localization == "small_gicp" and not map_name.endswith("_SGICP_MAP"):
+    sgicp_companion_name = map_name + "_SGICP_MAP"
+    sgicp_companion_path = os.path.join(pcd_dir, sgicp_companion_name + ".pcd")
+    if os.path.exists(sgicp_companion_path):
+        pcd_map_name = sgicp_companion_name
+        resolved_pcd_path = sgicp_companion_path
+        print(
+            f"[信息] Small-GICP 检测到同名增强点云，优先使用 {pcd_map_name}.pcd"
+        )
+
+if not resolved_pcd_path:
+    pcd_map_name, resolved_pcd_path = _resolve_resource_with_compact_fallback(
+        pcd_dir,
+        map_name,
+        ".pcd",
+        allow_fallback=not _env_map_name,
+    )
+
+if pcd_map_name != map_name:
+    print(f"[信息] 未找到点云地图 {map_name}.pcd，回退使用 {pcd_map_name}.pcd")
+icp_pcd_dir = resolved_pcd_path
 icp_registration_params_dir = os.path.join(
     config_dir, "icp_registration.yaml"
 )
 
 # ============================= small_gicp_registration parameters ========================
-small_gicp_pcd_dir = os.path.join(rm_nav_bringup_dir, "PCD", map_name + ".pcd")
+small_gicp_pcd_dir = resolved_pcd_path
 small_gicp_registration_params_dir = os.path.join(
     config_dir, "small_gicp_registration.yaml"
 )

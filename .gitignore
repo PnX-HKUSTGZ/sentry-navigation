@@ -4,6 +4,7 @@ install/
 log/
 artifacts/
 .conda/
+docs/logs/wave_verify_*/
 
 .vscode/
 .cache/
