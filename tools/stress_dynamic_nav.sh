@@ -38,6 +38,7 @@ MAP_TF_PRE_ACTION_CHECK="${MAP_TF_PRE_ACTION_CHECK:-}"
 BRINGUP_WORLD="${BRINGUP_WORLD:-}"
 BRINGUP_MAP="${BRINGUP_MAP:-}"
 BRINGUP_LIO="${BRINGUP_LIO:-}"
+NAV_USE_STVL="${NAV_USE_STVL:-}"
 BAG_RECORD="${BAG_RECORD:-0}"
 BAG_TOPICS="${BAG_TOPICS:-/clock /tf /tf_static /livox/lidar/pointcloud /Odometry /initialpose}"
 BAG_STORAGE="${BAG_STORAGE:-sqlite3}"
@@ -135,6 +136,7 @@ if [[ "${DRY_RUN}" == "1" ]]; then
   echo "  world=${BRINGUP_WORLD:-<config default>}"
   echo "  map=${BRINGUP_MAP:-<config/world default>}"
   echo "  lio=${BRINGUP_LIO:-<config default>}"
+  echo "  use_stvl=${NAV_USE_STVL:-<config default>}"
   echo "  clear_costmap_before_goal=${CLEAR_COSTMAP_BEFORE_GOAL}"
   echo "  goal_occupancy_policy=${GOAL_OCCUPANCY_POLICY}"
   echo "  goal_nearest_radius=${GOAL_NEAREST_RADIUS}m"
@@ -584,6 +586,9 @@ if [[ "${LAUNCH_BRINGUP}" == "1" ]]; then
   fi
   if [[ -n "${BRINGUP_LIO}" ]]; then
     launch_cmd+=("lio:=${BRINGUP_LIO}")
+  fi
+  if [[ -n "${NAV_USE_STVL}" ]]; then
+    launch_cmd+=("use_stvl:=${NAV_USE_STVL}")
   fi
   if [[ -n "${CONTROLLER}" ]]; then
     launch_cmd+=("controller:=${CONTROLLER}")
