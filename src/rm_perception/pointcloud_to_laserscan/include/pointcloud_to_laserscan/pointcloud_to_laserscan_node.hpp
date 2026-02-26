@@ -45,6 +45,7 @@
 #include <memory>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "message_filters/subscriber.h"
 #include "tf2_ros/buffer.h"
@@ -95,6 +96,8 @@ private:
     range_max_;
   bool use_inf_;
   double inf_epsilon_;
+  double exclude_range_min_, exclude_range_max_;
+  std::vector<double> exclude_angle_ranges_rad_;
 };
 
 }  // namespace pointcloud_to_laserscan

@@ -1,0 +1,23 @@
+pointcloud_to_laserscan:
+  ros__parameters:
+    target_frame: 'livox_frame'
+    transform_tolerance: 0.01
+    min_height: -1.0
+    max_height: 0.05
+    angle_min: -3.14159  # -M_PI
+    angle_max: 3.14159   # M_PI
+    angle_increment: 0.0043  # M_PI/360.0
+    scan_time: 0.3333
+    # Keep normal near-field sensitivity.
+    range_min: 0.45
+    range_max: 10.0
+    use_inf: true
+    inf_epsilon: 1.0
+
+    # Suppress the persistent front ghost points observed when the
+    # front mechanism is lifted.
+    exclude_range_min: 0.75
+    exclude_range_max: 1.35
+    # degree sectors [start1, end1, start2, end2, ...]
+    # Current field observation: ghost spots concentrate in front sector [-20, 20].
+    exclude_angle_ranges_deg: [-20.0, 20.0]

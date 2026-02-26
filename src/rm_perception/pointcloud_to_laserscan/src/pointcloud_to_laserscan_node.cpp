@@ -41,6 +41,7 @@
 #include "pointcloud_to_laserscan/pointcloud_to_laserscan_node.hpp"
 
 #include <chrono>
+#include <cmath>
 #include <functional>
 #include <limits>
 #include <memory>
@@ -54,6 +55,31 @@
 
 namespace pointcloud_to_laserscan
 {
+namespace
+{
+double normalizeAngle(double angle)
+{
+  while (angle > M_PI) {
+    angle -= 2.0 * M_PI;
+  }
+  while (angle < -M_PI) {
+    angle += 2.0 * M_PI;
+  }
+  return angle;
+}
+
+bool angleInRange(double angle, double start, double end)
+{
+  angle = normalizeAngle(angle);
+  start = normalizeAngle(start);
+  end = normalizeAngle(end);
+  if (start <= end) {
+    return angle >= start && angle <= end;
+  }
+  return angle >= start || angle <= end;
+}
+}  // namespace
+
 
 PointCloudToLaserScanNode::PointCloudToLaserScanNode(const rclcpp::NodeOptions & options)
 : rclcpp::Node("pointcloud_to_laserscan", options)
@@ -74,6 +100,27 @@ PointCloudToLaserScanNode::PointCloudToLaserScanNode(const rclcpp::NodeOptions &
   range_max_ = this->declare_parameter("range_max", std::numeric_limits<double>::max());
   inf_epsilon_ = this->declare_parameter("inf_epsilon", 1.0);
   use_inf_ = this->declare_parameter("use_inf", true);
+  exclude_range_min_ = this->declare_parameter("exclude_range_min", -1.0);
+  exclude_range_max_ = this->declare_parameter("exclude_range_max", -1.0);
+  auto exclude_angle_ranges_deg = this->declare_parameter(
+    "exclude_angle_ranges_deg", std::vector<double>{});
+  if (exclude_angle_ranges_deg.size() % 2 != 0) {
+    RCLCPP_WARN(
+      this->get_logger(),
+      "exclude_angle_ranges_deg expects [a1,b1,a2,b2,...], got %zu values; "
+      "the last value will be ignored",
+      exclude_angle_ranges_deg.size());
+  }
+  for (size_t i = 0; i + 1 < exclude_angle_ranges_deg.size(); i += 2) {
+    exclude_angle_ranges_rad_.push_back(exclude_angle_ranges_deg[i] * M_PI / 180.0);
+    exclude_angle_ranges_rad_.push_back(exclude_angle_ranges_deg[i + 1] * M_PI / 180.0);
+  }
+  if (!exclude_angle_ranges_rad_.empty() && exclude_range_max_ > exclude_range_min_) {
+    RCLCPP_INFO(
+      this->get_logger(),
+      "scan suppression enabled: %zu angle sectors, range [%.3f, %.3f] m",
+      exclude_angle_ranges_rad_.size() / 2, exclude_range_min_, exclude_range_max_);
+  }
 
   pub_ = this->create_publisher<sensor_msgs::msg::LaserScan>("scan", rclcpp::SensorDataQoS());
 
@@ -219,6 +266,20 @@ void PointCloudToLaserScanNode::cloudCallback(
         "rejected for angle %f not in range (%f, %f)\n",
         angle, scan_msg->angle_min, scan_msg->angle_max);
       continue;
+    }
+    if (!exclude_angle_ranges_rad_.empty() && exclude_range_max_ > exclude_range_min_ &&
+      range >= exclude_range_min_ && range <= exclude_range_max_)
+    {
+      bool suppressed = false;
+      for (size_t i = 0; i + 1 < exclude_angle_ranges_rad_.size(); i += 2) {
+        if (angleInRange(angle, exclude_angle_ranges_rad_[i], exclude_angle_ranges_rad_[i + 1])) {
+          suppressed = true;
+          break;
+        }
+      }
+      if (suppressed) {
+        continue;
+      }
     }
 
     // overwrite range at laserscan ray if new range is smaller
