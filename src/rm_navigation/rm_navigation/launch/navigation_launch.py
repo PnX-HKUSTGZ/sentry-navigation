@@ -187,7 +187,14 @@ def generate_launch_description():
                 arguments=['--ros-args', '--log-level', log_level],
                 parameters=[{'use_sim_time': use_sim_time},
                             {'autostart': autostart},
-                            {'node_names': lifecycle_nodes}]),
+                            {'node_names': lifecycle_nodes},
+                            # Relax lifecycle RPC/bond timeouts for heavy
+                            # simulation + perception chains.
+                            # nav2 lifecycle manager expects milliseconds here.
+                            {'service_timeout': 10000},
+                            {'bond_timeout': 8.0},
+                            {'attempt_respawn_reconnection': True},
+                            {'bond_respawn_max_duration': 30.0}]),
         ]
     )
 
@@ -244,7 +251,11 @@ def generate_launch_description():
                 name='lifecycle_manager_navigation',
                 parameters=[{'use_sim_time': use_sim_time,
                              'autostart': autostart,
-                             'node_names': lifecycle_nodes}]),
+                             'node_names': lifecycle_nodes,
+                             'service_timeout': 10000,
+                             'bond_timeout': 8.0,
+                             'attempt_respawn_reconnection': True,
+                             'bond_respawn_max_duration': 30.0}]),
         ],
     )
 

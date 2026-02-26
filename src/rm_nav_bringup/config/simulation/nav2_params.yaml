@@ -30,9 +30,10 @@ amcl:
     save_pose_rate: 0.5
     sigma_hit: 0.2
     tf_broadcast: true
-    transform_tolerance: 1.0
-    update_min_a: 1000.0
-    update_min_d: 1000.0
+    transform_tolerance: 3.0
+    # Keep AMCL map->odom fresh while avoiding over-reaction to noisy scans.
+    update_min_a: 0.2
+    update_min_d: 0.25
     z_hit: 0.5
     z_max: 0.05
     z_rand: 0.5
@@ -264,6 +265,7 @@ local_costmap:
       global_frame: odom
       robot_base_frame: base_link
       use_sim_time: True
+      transform_tolerance: 2.0
       rolling_window: true
       width: 6
       height: 6
@@ -311,6 +313,7 @@ global_costmap:
       global_frame: map
       robot_base_frame: base_link
       use_sim_time: True
+      transform_tolerance: 2.0
       robot_radius: 0.24
       resolution: 0.04
       track_unknown_space: true

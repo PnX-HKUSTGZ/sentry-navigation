@@ -1,0 +1,17 @@
+rows=347
+start_t=21.742
+start_x=-5.375000
+start_y=3.425000
+start_z=0.102580
+end_t=56.342
+end_x=-5.839034
+end_y=1.846183
+end_z=0.061500
+xy_displacement_m=1.645598
+x_span_m=2.179996
+y_span_m=1.578817
+z_min_m=0.059990
+z_max_m=0.102580
+z_range_m=0.042590
+z_peak_time_s=0.000
+z_valley_time_s=10.000

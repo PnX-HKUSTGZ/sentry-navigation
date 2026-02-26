@@ -145,9 +145,13 @@ def main() -> None:
         x_start=-5.20,
         length=1.44,
         dx=0.01,
-        y_center=3.30,
+        # Align to current RMUL_26_WAVE test corridor used by stress waypoints.
+        y_center=2.20,
         width=0.70,
-        z_base=1.135,
+        # NOTE:
+        # Wave strip is an additive overlay on the existing mesh floor (cannot carve valleys).
+        # Set mean so troughs sit close to floor (~0.06m) and peaks rise by ~70mm.
+        z_base=0.096,
         wavelength=0.24,
         peak_to_peak=0.07,
         thickness=0.006,

@@ -1,0 +1,13 @@
+world=src/rm_simulation/pb_rm_simulation/world/RMUL2026_world/RMUL2026_wave.world
+count=144
+dx_mean_m=0.010000
+length_m=1.440000
+y_center_m=2.200000
+width_m=0.700000
+thickness_m=0.006000
+z_top_min_m=1.100000
+z_top_max_m=1.170000
+peak_to_peak_m=0.070000
+inferred_wavelength_m=0.240000
+max_abs_error_mm=9.1000
+rmse_error_mm=3.7367

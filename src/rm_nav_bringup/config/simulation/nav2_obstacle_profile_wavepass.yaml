@@ -1,0 +1,16 @@
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      # Wave-pass regression profile:
+      # rely on static map in local planning to avoid terrain returns being
+      # interpreted as dynamic obstacles on the wave strip.
+      obstacle_layer:
+        enabled: false
+      inflation_layer:
+        inflation_radius: 0.35
+      always_send_full_costmap: false
+
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      always_send_full_costmap: false

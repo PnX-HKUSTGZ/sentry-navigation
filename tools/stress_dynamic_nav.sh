@@ -69,6 +69,10 @@ DYNAMIC_OBS_REFERENCE_FRAME="${DYNAMIC_OBS_REFERENCE_FRAME:-world}"
 DYNAMIC_OBS_SPAWN_SERVICE="${DYNAMIC_OBS_SPAWN_SERVICE:-/spawn_entity}"
 DYNAMIC_OBS_SET_SERVICE="${DYNAMIC_OBS_SET_SERVICE:-/gazebo/set_entity_state}"
 DYNAMIC_OBS_DELETE_SERVICE="${DYNAMIC_OBS_DELETE_SERVICE:-/delete_entity}"
+SPEED_LIMIT_MPS="${SPEED_LIMIT_MPS:-}"               # empty => no runtime speed-limit override
+SPEED_LIMIT_PERCENTAGE="${SPEED_LIMIT_PERCENTAGE:-0}" # 0 => absolute m/s, 1 => percentage (0~100)
+BRINGUP_RETRY_COUNT="${BRINGUP_RETRY_COUNT:-2}"      # retries when bringup launches but action server never appears
+BRINGUP_RETRY_BACKOFF_SEC="${BRINGUP_RETRY_BACKOFF_SEC:-4}"
 
 # ICP/small-gicp need extra bootstrap time for map->odom before Nav2 lifecycle bringup.
 if [[ -z "${NAV_START_DELAY}" ]]; then
@@ -160,6 +164,10 @@ if [[ "${DRY_RUN}" == "1" ]]; then
   echo "  dynamic_obstacle_period=${DYNAMIC_OBS_PERIOD_SEC}s"
   echo "  dynamic_obstacle_dt=${DYNAMIC_OBS_DT_SEC}s rate=${DYNAMIC_OBS_RATE_HZ}Hz"
   echo "  dynamic_obstacle_topic=${DYNAMIC_OBS_TOPIC} frame=${DYNAMIC_OBS_FRAME_ID}"
+  echo "  speed_limit_mps=${SPEED_LIMIT_MPS:-<disabled>}"
+  echo "  speed_limit_percentage=${SPEED_LIMIT_PERCENTAGE}"
+  echo "  bringup_retry_count=${BRINGUP_RETRY_COUNT}"
+  echo "  bringup_retry_backoff_sec=${BRINGUP_RETRY_BACKOFF_SEC}"
   echo "  bag_record=${BAG_RECORD}"
   echo "  bag_topics=${BAG_TOPICS}"
   echo "  bag_storage=${BAG_STORAGE}"
@@ -256,6 +264,83 @@ BRINGUP_PID=""
 BAG_PID=""
 DYNAMIC_OBS_PID=""
 MAP_TF_READY=0
+LAUNCH_CMD=()
+BRINGUP_LOG="${ARTIFACT_DIR}/bringup.log"
+
+stop_bringup_process() {
+  if [[ -n "${BRINGUP_PID}" ]] && kill -0 "${BRINGUP_PID}" 2>/dev/null; then
+    echo "[cleanup] stopping bringup process group pgid=${BRINGUP_PID}" >&2
+    kill -- "-${BRINGUP_PID}" 2>/dev/null || kill "${BRINGUP_PID}" 2>/dev/null || true
+    sleep 1
+    kill -9 -- "-${BRINGUP_PID}" 2>/dev/null || kill -9 "${BRINGUP_PID}" 2>/dev/null || true
+  fi
+  BRINGUP_PID=""
+}
+
+start_bringup_process() {
+  local attempt_label="${1:-initial}"
+  if [[ "${LAUNCH_BRINGUP}" != "1" ]]; then
+    return 0
+  fi
+  if [[ "${#LAUNCH_CMD[@]}" -eq 0 ]]; then
+    echo "[ERROR] internal: empty LAUNCH_CMD while LAUNCH_BRINGUP=1" >&2
+    return 1
+  fi
+  if [[ "${attempt_label}" == "initial" ]]; then
+    : > "${BRINGUP_LOG}"
+  else
+    {
+      echo
+      echo "===== bringup restart ${attempt_label} @ $(date -Is) ====="
+    } >> "${BRINGUP_LOG}"
+  fi
+  setsid "${LAUNCH_CMD[@]}" >> "${BRINGUP_LOG}" 2>&1 &
+  BRINGUP_PID=$!
+  sleep 1
+  if ! kill -0 "${BRINGUP_PID}" 2>/dev/null; then
+    echo "[ERROR] bringup process exited immediately (attempt=${attempt_label})" >&2
+    return 1
+  fi
+  return 0
+}
+
+restart_bringup_process() {
+  local reason="$1"
+  local retry_idx="$2"
+  echo "[WARN] bringup preflight failed (${reason}), restarting bringup ${retry_idx}/${BRINGUP_RETRY_COUNT}" >&2
+  stop_bringup_process
+  ros2 daemon stop >/dev/null 2>&1 || true
+  ros2 daemon start >/dev/null 2>&1 || true
+  sleep "${BRINGUP_RETRY_BACKOFF_SEC}"
+  ACTION_NAME=""
+  MAP_TF_READY=0
+  start_bringup_process "retry-${retry_idx}"
+}
+
+start_bag_recording() {
+  if [[ "${BAG_RECORD}" != "1" ]]; then
+    return 0
+  fi
+  if [[ " ${BAG_TOPICS} " == *" /livox/lidar/pointcloud "* ]]; then
+    echo "[WARN] BAG_TOPICS contains /livox/lidar/pointcloud. Heavy bag I/O may reduce real-time nav performance." >&2
+  fi
+  if [[ -z "${BAG_OUTPUT}" ]]; then
+    BAG_OUTPUT="${ARTIFACT_DIR}/rosbag_dataset"
+  fi
+  mkdir -p "$(dirname "${BAG_OUTPUT}")"
+  rm -rf "${BAG_OUTPUT}"
+  echo "[bag] recording topics: ${BAG_TOPICS}"
+  echo "[bag] output: ${BAG_OUTPUT}"
+  setsid ros2 bag record --storage "${BAG_STORAGE}" -o "${BAG_OUTPUT}" ${BAG_TOPICS} \
+    > "${ARTIFACT_DIR}/rosbag_record.log" 2>&1 &
+  BAG_PID=$!
+  sleep 1
+  if ! kill -0 "${BAG_PID}" 2>/dev/null; then
+    echo "[ERROR] rosbag recorder exited early. check ${ARTIFACT_DIR}/rosbag_record.log" >&2
+    return 1
+  fi
+  return 0
+}
 
 cleanup() {
   if [[ -n "${DYNAMIC_OBS_PID}" ]] && kill -0 "${DYNAMIC_OBS_PID}" 2>/dev/null; then
@@ -270,13 +355,7 @@ cleanup() {
     sleep 1
     kill -9 -- "-${BAG_PID}" 2>/dev/null || kill -9 "${BAG_PID}" 2>/dev/null || true
   fi
-  if [[ -n "${BRINGUP_PID}" ]] && kill -0 "${BRINGUP_PID}" 2>/dev/null; then
-    echo "[cleanup] stopping bringup process group pgid=${BRINGUP_PID}" >&2
-    # bringup is launched with setsid, so killing by negative pid cleans all children.
-    kill -- "-${BRINGUP_PID}" 2>/dev/null || kill "${BRINGUP_PID}" 2>/dev/null || true
-    sleep 1
-    kill -9 -- "-${BRINGUP_PID}" 2>/dev/null || kill -9 "${BRINGUP_PID}" 2>/dev/null || true
-  fi
+  stop_bringup_process
 }
 trap cleanup EXIT
 
@@ -453,6 +532,70 @@ clear_costmaps() {
   done
 }
 
+wait_for_service_available() {
+  local service_name="$1"
+  local timeout_s="$2"
+  local loops=$((timeout_s * 2))
+  local i
+  for ((i = 1; i <= loops; i++)); do
+    if ros2 service list 2>/dev/null | grep -qx "${service_name}"; then
+      return 0
+    fi
+    sleep 0.5
+  done
+  return 1
+}
+
+apply_controller_speed_limit() {
+  local speed_limit="$1"
+  local percentage_raw="$2"
+  local percentage="false"
+  if [[ "${percentage_raw}" == "1" ]]; then
+    percentage="true"
+  fi
+  local srv="/controller_server/set_speed_limit"
+  local used_fallback=0
+
+  if ! wait_for_service_available "${srv}" 8; then
+    # Fallback path for deployments where SetSpeedLimit service is absent:
+    # apply conservative DWB velocity caps via dynamic parameter updates.
+    if [[ "${percentage}" == "false" ]]; then
+      local ok=0
+      local attempt
+      for attempt in 1 2 3 4 5 6; do
+        if timeout 3 ros2 param set /controller_server "FollowPath.max_vel_x" "${speed_limit}" >/dev/null 2>&1 \
+          && timeout 3 ros2 param set /controller_server "FollowPath.max_speed_xy" "${speed_limit}" >/dev/null 2>&1 \
+          && timeout 3 ros2 param set /controller_server "FollowPath.min_vel_x" "-${speed_limit}" >/dev/null 2>&1; then
+          ok=1
+          break
+        fi
+        sleep 1
+      done
+      if [[ "${ok}" == "1" ]]; then
+        used_fallback=1
+      else
+        echo "[WARN] speed-limit service unavailable and parameter fallback failed." >&2
+        return 1
+      fi
+    else
+      echo "[WARN] speed-limit service unavailable: ${srv}" >&2
+      return 1
+    fi
+  fi
+
+  if [[ "${used_fallback}" == "0" ]]; then
+    if ! timeout 4 ros2 service call "${srv}" nav2_msgs/srv/SetSpeedLimit \
+      "{speed_limit: ${speed_limit}, percentage: ${percentage}}" >/dev/null 2>&1; then
+      echo "[WARN] failed to call ${srv} with speed_limit=${speed_limit}, percentage=${percentage}" >&2
+      return 1
+    fi
+    echo "[INFO] applied speed limit by service: speed_limit=${speed_limit}, percentage=${percentage}"
+  else
+    echo "[INFO] applied speed limit by param fallback: speed_limit=${speed_limit}"
+  fi
+  return 0
+}
+
 publish_initialpose() {
   timeout 4 ros2 topic pub --rate 5 /initialpose geometry_msgs/msg/PoseWithCovarianceStamped \
     "{header: {frame_id: 'map', stamp: {sec: 0, nanosec: 0}}, pose: {pose: {position: {x: ${INIT_X}, y: ${INIT_Y}, z: 0.0}, orientation: {x: 0.0, y: 0.0, z: ${INIT_QZ}, w: ${INIT_QW}}}}}" \
@@ -577,92 +720,108 @@ if [[ "${LAUNCH_BRINGUP}" == "1" ]]; then
     exit 2
   fi
   echo "[1/5] Launch bringup (single entrypoint)"
-  launch_cmd=(ros2 launch rm_nav_bringup bringup.launch.py "localization:=${LOCALIZATION}" "nav_rviz:=${NAV_RVIZ}")
+  LAUNCH_CMD=(ros2 launch rm_nav_bringup bringup.launch.py "localization:=${LOCALIZATION}" "nav_rviz:=${NAV_RVIZ}")
   if [[ -n "${BRINGUP_WORLD}" ]]; then
-    launch_cmd+=("world:=${BRINGUP_WORLD}")
+    LAUNCH_CMD+=("world:=${BRINGUP_WORLD}")
   fi
   if [[ -n "${BRINGUP_MAP}" ]]; then
-    launch_cmd+=("map:=${BRINGUP_MAP}")
+    LAUNCH_CMD+=("map:=${BRINGUP_MAP}")
   fi
   if [[ -n "${BRINGUP_LIO}" ]]; then
-    launch_cmd+=("lio:=${BRINGUP_LIO}")
+    LAUNCH_CMD+=("lio:=${BRINGUP_LIO}")
   fi
   if [[ -n "${NAV_USE_STVL}" ]]; then
-    launch_cmd+=("use_stvl:=${NAV_USE_STVL}")
+    LAUNCH_CMD+=("use_stvl:=${NAV_USE_STVL}")
   fi
   if [[ -n "${CONTROLLER}" ]]; then
-    launch_cmd+=("controller:=${CONTROLLER}")
+    LAUNCH_CMD+=("controller:=${CONTROLLER}")
   fi
   if [[ -n "${NAV_START_DELAY}" ]]; then
-    launch_cmd+=("nav_start_delay:=${NAV_START_DELAY}")
+    LAUNCH_CMD+=("nav_start_delay:=${NAV_START_DELAY}")
   fi
   if [[ -n "${LIDAR_NOISE_STDDEV}" ]]; then
-    launch_cmd+=("lidar_noise_stddev:=${LIDAR_NOISE_STDDEV}")
+    LAUNCH_CMD+=("lidar_noise_stddev:=${LIDAR_NOISE_STDDEV}")
   fi
-  setsid "${launch_cmd[@]}" > "${ARTIFACT_DIR}/bringup.log" 2>&1 &
-  BRINGUP_PID=$!
-fi
-
-if [[ "${BAG_RECORD}" == "1" ]]; then
-  if [[ -z "${BAG_OUTPUT}" ]]; then
-    BAG_OUTPUT="${ARTIFACT_DIR}/rosbag_dataset"
+  if ! start_bringup_process "initial"; then
+    echo "[ERROR] failed to start bringup process" >&2
+    exit 2
   fi
-  mkdir -p "$(dirname "${BAG_OUTPUT}")"
-  rm -rf "${BAG_OUTPUT}"
-  echo "[bag] recording topics: ${BAG_TOPICS}"
-  echo "[bag] output: ${BAG_OUTPUT}"
-  setsid ros2 bag record --storage "${BAG_STORAGE}" -o "${BAG_OUTPUT}" ${BAG_TOPICS} \
-    > "${ARTIFACT_DIR}/rosbag_record.log" 2>&1 &
-  BAG_PID=$!
-  sleep 1
 fi
 
-echo "[2/5] Publish /initialpose (BEST_EFFORT + VOLATILE)"
-publish_initialpose
-if wait_for_amcl_pose 8; then
-  echo "[INFO] /amcl_pose detected."
-else
-  echo "[WARN] /amcl_pose not observed yet; continue waiting for Nav2 action server." >&2
-fi
-
-if [[ "${LOCALIZATION}" == "icp" || "${LOCALIZATION}" == "small_gicp" ]] && [[ "${MAP_TF_PRE_ACTION_CHECK}" == "1" ]]; then
-  echo "[INFO] Pre-action gate: wait for stable map->odom TF, timeout=${MAP_TF_WAIT_TIMEOUT}s, required_samples=${MAP_TF_STABLE_SAMPLES}"
-  if wait_for_map_tf_stable "${MAP_TF_WAIT_TIMEOUT}" "${MAP_TF_STABLE_SAMPLES}"; then
-    MAP_TF_READY=1
-    echo "[INFO] stable map->odom TF detected before action wait."
-    echo "[INFO] Re-publish /initialpose after pre-action map->odom gate"
-    publish_initialpose_once
-    sleep 1
+bringup_preflight_attempt=0
+while true; do
+  echo "[2/5] Publish /initialpose (BEST_EFFORT + VOLATILE)"
+  publish_initialpose
+  if wait_for_amcl_pose 8; then
+    echo "[INFO] /amcl_pose detected."
   else
-    if [[ "${MAP_TF_REQUIRED}" == "1" ]]; then
-      echo "[ERROR] stable map->odom TF not detected in pre-action gate." >&2
-      exit 4
-    fi
-    echo "[WARN] stable map->odom TF not detected in pre-action gate; continuing by policy." >&2
+    echo "[WARN] /amcl_pose not observed yet; continue waiting for Nav2 action server." >&2
   fi
-fi
 
-echo "[3/5] Wait for /navigate_to_pose action server"
-if ! wait_for_action "${ACTION_WAIT_TIMEOUT}"; then
+  if [[ "${LOCALIZATION}" == "icp" || "${LOCALIZATION}" == "small_gicp" ]] && [[ "${MAP_TF_PRE_ACTION_CHECK}" == "1" ]]; then
+    echo "[INFO] Pre-action gate: wait for stable map->odom TF, timeout=${MAP_TF_WAIT_TIMEOUT}s, required_samples=${MAP_TF_STABLE_SAMPLES}"
+    if wait_for_map_tf_stable "${MAP_TF_WAIT_TIMEOUT}" "${MAP_TF_STABLE_SAMPLES}"; then
+      MAP_TF_READY=1
+      echo "[INFO] stable map->odom TF detected before action wait."
+      echo "[INFO] Re-publish /initialpose after pre-action map->odom gate"
+      publish_initialpose_once
+      sleep 1
+    else
+      if [[ "${MAP_TF_REQUIRED}" == "1" ]]; then
+        if [[ "${LAUNCH_BRINGUP}" == "1" && "${bringup_preflight_attempt}" -lt "${BRINGUP_RETRY_COUNT}" ]]; then
+          bringup_preflight_attempt=$((bringup_preflight_attempt + 1))
+          if ! restart_bringup_process "map_tf_unavailable" "${bringup_preflight_attempt}"; then
+            echo "[ERROR] failed to restart bringup during map->odom pre-action gate" >&2
+            exit 3
+          fi
+          continue
+        fi
+        echo "[ERROR] stable map->odom TF not detected in pre-action gate." >&2
+        exit 4
+      fi
+      echo "[WARN] stable map->odom TF not detected in pre-action gate; continuing by policy." >&2
+    fi
+  fi
+
+  echo "[3/5] Wait for /navigate_to_pose action server"
+  if wait_for_action "${ACTION_WAIT_TIMEOUT}"; then
+    echo "[INFO] Action server: ${ACTION_NAME}"
+    # Some localization nodes (e.g. icp/small_gicp) are launched with delay.
+    # Re-publish here so delayed subscribers can still receive it.
+    if [[ "${LOCALIZATION}" == "icp" || "${LOCALIZATION}" == "small_gicp" ]]; then
+      echo "[INFO] Re-publish /initialpose once for delayed localization nodes"
+      publish_initialpose_once
+    fi
+    break
+  fi
+
   if [[ "${LOCALIZATION}" == "icp" || "${LOCALIZATION}" == "small_gicp" ]]; then
     echo "[WARN] Action server not ready; re-publish /initialpose burst and retry..." >&2
     publish_initialpose
-    if ! wait_for_action 60; then
-      echo "[ERROR] /navigate_to_pose not available after initialpose retry" >&2
+    if wait_for_action 60; then
+      echo "[INFO] Action server: ${ACTION_NAME}"
+      echo "[INFO] Re-publish /initialpose once for delayed localization nodes"
+      publish_initialpose_once
+      break
+    fi
+  fi
+
+  if [[ "${LAUNCH_BRINGUP}" == "1" && "${bringup_preflight_attempt}" -lt "${BRINGUP_RETRY_COUNT}" ]]; then
+    bringup_preflight_attempt=$((bringup_preflight_attempt + 1))
+    if ! restart_bringup_process "action_server_unavailable" "${bringup_preflight_attempt}"; then
+      echo "[ERROR] failed to restart bringup during preflight" >&2
       exit 3
     fi
+    continue
+  fi
+
+  if [[ "${LOCALIZATION}" == "icp" || "${LOCALIZATION}" == "small_gicp" ]]; then
+    echo "[ERROR] /navigate_to_pose not available after initialpose retry" >&2
   else
     echo "[ERROR] /navigate_to_pose not available" >&2
-    exit 3
   fi
-fi
-echo "[INFO] Action server: ${ACTION_NAME}"
-# Some localization nodes (e.g. icp/small_gicp) are launched with delay.
-# Re-publish here so delayed subscribers can still receive it.
-if [[ "${LOCALIZATION}" == "icp" || "${LOCALIZATION}" == "small_gicp" ]]; then
-  echo "[INFO] Re-publish /initialpose once for delayed localization nodes"
-  publish_initialpose_once
-fi
+  exit 3
+done
 
 if [[ "${ODOM_TOPIC}" == "auto" ]]; then
   echo "[INFO] Auto-detect odometry topic (${ODOM_TOPIC_CANDIDATES}), timeout=${ODOM_WAIT_TIMEOUT}s"
@@ -715,6 +874,11 @@ if [[ "${STARTUP_SETTLE_SEC}" != "0" ]]; then
   echo "[INFO] Settling ${STARTUP_SETTLE_SEC}s for lifecycle stabilization..."
   sleep "${STARTUP_SETTLE_SEC}"
 fi
+
+if [[ -n "${SPEED_LIMIT_MPS}" ]]; then
+  apply_controller_speed_limit "${SPEED_LIMIT_MPS}" "${SPEED_LIMIT_PERCENTAGE}" || true
+fi
+
 if [[ "${LOCALIZATION}" == "icp" || "${LOCALIZATION}" == "small_gicp" ]]; then
   if [[ "${MAP_TF_READY}" == "1" ]]; then
     echo "[INFO] map->odom TF already stabilized in pre-action stage."
@@ -738,6 +902,9 @@ fi
 
 if ! start_dynamic_obstacle; then
   exit 14
+fi
+if ! start_bag_recording; then
+  exit 15
 fi
 
 IFS=';' read -r -a WAYPOINT_ARRAY <<< "${WAYPOINTS}"
@@ -793,6 +960,8 @@ aborted=0
 timeout_cnt=0
 other_fail=0
 duration_sum=0
+timeout_retries_used=0
+abort_retries_used=0
 
 for ((round = 1; round <= ROUNDS; round++)); do
   echo "== Round ${round}/${ROUNDS} =="
@@ -867,6 +1036,7 @@ for ((round = 1; round <= ROUNDS; round++)); do
 
       if [[ "${rc}" -eq 124 && "${timeout_attempt}" -lt "${TIMEOUT_RETRY_COUNT}" ]]; then
         timeout_attempt=$((timeout_attempt + 1))
+        timeout_retries_used=$((timeout_retries_used + 1))
         current_goal_log="${goal_log}.timeout_retry${timeout_attempt}"
         echo "[WARN] goal (${gx}, ${gy}) timeout on attempt ${timeout_attempt}, retrying..."
         sleep 0.2
@@ -875,6 +1045,7 @@ for ((round = 1; round <= ROUNDS; round++)); do
 
       if [[ "${status_line}" == *"ABORTED"* && "${abort_attempt}" -lt "${ABORT_RETRY_COUNT}" ]]; then
         abort_attempt=$((abort_attempt + 1))
+        abort_retries_used=$((abort_retries_used + 1))
         echo "[WARN] goal (${gx}, ${gy}) ABORTED on attempt ${abort_attempt}, relocalize+retry..."
         if [[ "${CLEAR_COSTMAP_ON_ABORT}" == "1" ]]; then
           clear_costmaps
@@ -930,6 +1101,8 @@ other_fail=${other_fail}
 invalid_goal_skipped=${invalid_goal_cnt}
 success_rate_percent=${success_rate}
 avg_duration_sec=${avg_duration}
+timeout_retries_used=${timeout_retries_used}
+abort_retries_used=${abort_retries_used}
 bag_record=${BAG_RECORD}
 bag_output=${BAG_OUTPUT}
 EOF

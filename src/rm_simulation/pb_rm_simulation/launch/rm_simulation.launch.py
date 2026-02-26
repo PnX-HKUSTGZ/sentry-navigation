@@ -62,7 +62,8 @@ def get_world_config(world_type):
             # Left-upper spawn (map-derived) for easier team-side debugging.
             'x': '-5.375',
             'y': '3.425',
-            'z': '1.16',
+            # Lower spawn to avoid long free-fall transient on RMUL26 mesh.
+            'z': '0.08',
             'yaw': '-0.567331',
             'world_path': 'RMUL2026_world/RMUL2026_world.world'
         },
@@ -70,7 +71,8 @@ def get_world_config(world_type):
             # Same spawn as RMUL_26, with an added wave strip near own-side corridor.
             'x': '-5.375',
             'y': '3.425',
-            'z': '1.16',
+            # Keep same spawn-height contract as RMUL_26.
+            'z': '0.08',
             'yaw': '-0.567331',
             'world_path': 'RMUL2026_world/RMUL2026_wave.world'
         }
