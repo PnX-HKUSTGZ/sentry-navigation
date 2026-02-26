@@ -48,6 +48,19 @@ def _parse_bool_str(value: str, *, key: str) -> bool:
     raise ValueError(f"无效的布尔参数 {key}: {value!r}. 允许值: 1/0/true/false/yes/no/on/off")
 
 
+def _parse_profile_name(value: str, *, key: str) -> str:
+    profile = value.strip().lower()
+    if not profile:
+        raise ValueError(f"{key} 不能为空")
+    if profile == "default":
+        return profile
+    if not profile.replace("_", "").isalnum():
+        raise ValueError(
+            f"{key} 仅允许字母/数字/下划线，当前: {value!r}"
+        )
+    return profile
+
+
 def _resolve_resource_with_compact_fallback(resource_dir: str, resource_name: str, suffix: str, *, allow_fallback: bool):
     """Resolve {resource_name}{suffix}; optionally fallback to name without underscores."""
     preferred_path = os.path.join(resource_dir, resource_name + suffix)
@@ -87,6 +100,11 @@ _env_lidar_noise_stddev = os.environ.get("RM_NAV_LIDAR_NOISE_STDDEV", "").strip(
 _env_use_stvl = os.environ.get("RM_NAV_USE_STVL", "").strip()
 use_stvl = _parse_bool_str(_env_use_stvl, key="RM_NAV_USE_STVL") if _env_use_stvl else bool(
     launch_params.get("use_stvl", False)
+)
+_env_obstacle_profile = os.environ.get("RM_NAV_OBSTACLE_PROFILE", "").strip()
+obstacle_profile = _parse_profile_name(
+    _env_obstacle_profile if _env_obstacle_profile else str(launch_params.get("obstacle_profile", "default")),
+    key="RM_NAV_OBSTACLE_PROFILE",
 )
 try:
     lidar_noise_stddev = (
@@ -159,12 +177,28 @@ print(f"  LIO可视化: {use_lio_rviz}")
 print(f"  双雷达: {dual_lidar_enable}")
 print(f"  Nav2消费右雷达: {dual_lidar_nav2_consume_right}")
 print(f"  双雷达障碍融合模式: {dual_lidar_obstacle_fusion_mode}")
-print(f"  仿真全局代价地图STVL: {use_stvl}")
+print(f"  全局代价地图STVL: {use_stvl}")
+print(f"  障碍过滤模板: {obstacle_profile}")
 
 if use_sim:
     config_dir = os.path.join(rm_nav_bringup_dir, "config", "simulation")
 else:
     config_dir = os.path.join(rm_nav_bringup_dir, "config", "reality")
+
+
+def _resolve_profile_yaml(config_dir: str, base_name: str, profile_name: str) -> str:
+    """Resolve profile-specific YAML path (base_name_profile.yaml) with default fallback."""
+    base_path = os.path.join(config_dir, base_name)
+    if profile_name == "default":
+        return base_path
+
+    stem, ext = os.path.splitext(base_name)
+    profile_path = os.path.join(config_dir, f"{stem}_{profile_name}{ext}")
+    if not os.path.exists(profile_path):
+        raise FileNotFoundError(
+            f"未找到模板配置: {profile_path} (profile={profile_name})"
+        )
+    return profile_path
 
 # =========================== robot description parameters ================================
 # 使用xacro生成机器人URDF描述，导入雷达坐标系参数
@@ -216,8 +250,8 @@ else:
 # =========================== pointcloud pretreatment parameters ==========================
 segmentation_params = os.path.join(config_dir, "segmentation.yaml")
 segmentation_right_params = os.path.join(config_dir, "segmentation_right.yaml")
-pointcloud_to_laserscan_params = os.path.join(
-    config_dir, "pointcloud_to_laserscan.yaml"
+pointcloud_to_laserscan_params = _resolve_profile_yaml(
+    config_dir, "pointcloud_to_laserscan.yaml", obstacle_profile
 )
 obstacle_merge_script = os.path.join(rm_nav_bringup_dir, "scripts", "merge_obstacle_clouds.py")
 
@@ -329,6 +363,39 @@ def _drop_dual_lidar_sources(nav2_params: dict) -> dict:
     return nav2_params
 
 
+def _global_costmap_ros_params(nav2_params: dict) -> dict:
+    return (
+        nav2_params
+        .setdefault("global_costmap", {})
+        .setdefault("global_costmap", {})
+        .setdefault("ros__parameters", {})
+    )
+
+
+def _global_has_stvl_config(nav2_params: dict) -> bool:
+    return isinstance(_global_costmap_ros_params(nav2_params).get("stvl_layer"), dict)
+
+
+def _set_global_stvl_enabled(nav2_params: dict, enabled: bool) -> dict:
+    ros_params = _global_costmap_ros_params(nav2_params)
+
+    plugins = ros_params.get("plugins")
+    if not isinstance(plugins, list):
+        plugins = ["static_layer", "inflation_layer"]
+
+    plugins = [p for p in plugins if p != "stvl_layer"]
+    if enabled:
+        if "static_layer" in plugins:
+            plugins.insert(plugins.index("static_layer") + 1, "stvl_layer")
+        else:
+            plugins.insert(0, "stvl_layer")
+    else:
+        ros_params.pop("stvl_layer", None)
+
+    ros_params["plugins"] = plugins
+    return nav2_params
+
+
 def _get_nav2_params_file(
     config_dir: str,
     controller_type: str,
@@ -336,6 +403,7 @@ def _get_nav2_params_file(
     nav2_consume_right: bool,
     obstacle_fusion_mode: str,
     use_stvl_global: bool,
+    obstacle_profile_name: str,
 ) -> str:
     base_params = os.path.join(config_dir, "nav2_params.yaml")
     merged_params = _load_yaml(base_params)
@@ -353,12 +421,44 @@ def _get_nav2_params_file(
 
     if use_stvl_global:
         stvl_overlay = os.path.join(config_dir, "nav2_global_stvl.yaml")
-        if not os.path.exists(stvl_overlay):
-            raise FileNotFoundError(f"Nav2 STVL overlay not found: {stvl_overlay}")
+        if os.path.exists(stvl_overlay):
+            merged_params = _deep_merge(
+                merged_params,
+                _load_yaml(stvl_overlay),
+                replace_keys=set(),
+            )
+        merged_params = _set_global_stvl_enabled(merged_params, True)
+        if not _global_has_stvl_config(merged_params):
+            raise FileNotFoundError(
+                "STVL 已启用，但配置中缺少 stvl_layer 参数。"
+                f" 请检查 {base_params} 或补充 {stvl_overlay}。"
+            )
+    else:
+        nostvl_overlay = os.path.join(config_dir, "nav2_global_nostvl.yaml")
+        if os.path.exists(nostvl_overlay):
+            merged_params = _deep_merge(
+                merged_params,
+                _load_yaml(nostvl_overlay),
+                replace_keys=set(),
+            )
+        merged_params = _set_global_stvl_enabled(merged_params, False)
+
+    if obstacle_profile_name != "default":
+        obstacle_profile_overlay = _resolve_profile_yaml(
+            config_dir, "nav2_obstacle_profile.yaml", obstacle_profile_name
+        )
         merged_params = _deep_merge(
             merged_params,
-            _load_yaml(stvl_overlay),
+            _load_yaml(obstacle_profile_overlay),
             replace_keys=set(),
+        )
+
+    # Enforce final STVL on/off contract after all overlays.
+    merged_params = _set_global_stvl_enabled(merged_params, use_stvl_global)
+    if use_stvl_global and not _global_has_stvl_config(merged_params):
+        raise FileNotFoundError(
+            "STVL 已启用，但配置中缺少 stvl_layer 参数。"
+            f" 请检查 {base_params} 或补充 nav2_global_stvl.yaml。"
         )
 
     # In single-lidar mode or merged-obstacle mode, Nav2 should not subscribe
@@ -370,16 +470,6 @@ def _get_nav2_params_file(
     ):
         merged_params = _drop_dual_lidar_sources(merged_params)
 
-    if (
-        controller_type == 'teb'
-        and dual_lidar_enabled
-        and nav2_consume_right
-        and obstacle_fusion_mode != "merged"
-        and not use_stvl_global
-    ):
-        # Fast-path: base file already matches requested setup.
-        return base_params
-
     out_dir = os.path.join('/tmp', 'rm_nav_bringup')
     os.makedirs(out_dir, exist_ok=True)
     out_file = os.path.join(
@@ -388,7 +478,8 @@ def _get_nav2_params_file(
             f"nav2_params_{'sim' if use_sim else 'real'}_{controller_type}_"
             f"{'dual' if dual_lidar_enabled else 'single'}_"
             f"{'consume_right' if nav2_consume_right else 'ignore_right'}_"
-            f"{obstacle_fusion_mode}_{'stvl' if use_stvl_global else 'nostvl'}.yaml"
+            f"{obstacle_fusion_mode}_{'stvl' if use_stvl_global else 'nostvl'}_"
+            f"{obstacle_profile_name}.yaml"
         )
     )
     with open(out_file, 'w', encoding='utf-8') as f:
@@ -408,7 +499,8 @@ nav2_params_file_dir = _get_nav2_params_file(
     dual_lidar_enable,
     dual_lidar_nav2_consume_right,
     dual_lidar_obstacle_fusion_mode,
-    use_stvl if use_sim else False,
+    use_stvl,
+    obstacle_profile,
 )
 
 # =============================== icp_registration parameters ==============================

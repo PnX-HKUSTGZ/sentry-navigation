@@ -15,5 +15,6 @@ mode: nav
 use_lio_rviz: false
 use_sim: true
 use_stvl: true
+obstacle_profile: default
 lidar_noise_stddev: 0.002
 world: RMUL_26

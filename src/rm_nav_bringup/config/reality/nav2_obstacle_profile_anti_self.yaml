@@ -1,0 +1,37 @@
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      # Tighten near-field obstacle gate to suppress self-hit / wiring reflections.
+      obstacle_layer:
+        scan:
+          obstacle_min_range: 0.60
+          obstacle_max_range: 5.5
+          raytrace_max_range: 5.5
+        lidar_right:
+          obstacle_min_range: 0.75
+          obstacle_max_range: 3.5
+      inflation_layer:
+        inflation_radius: 0.55
+      always_send_full_costmap: false
+
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      # Reduce publish pressure for multi-RViz / low-CPU bringup.
+      always_send_full_costmap: false
+      stvl_layer:
+        publish_voxel_map: false
+        voxel_decay: 0.35
+        transform_tolerance: 0.15
+        livox_mark:
+          obstacle_range: 2.8
+          min_obstacle_height: 0.25
+          max_obstacle_height: 1.8
+          observation_persistence: 0.12
+          voxel_min_points: 2
+        livox_clear:
+          # Keep ray-clearing effective at normal obstacle heights to avoid stale ghost voxels.
+          min_z: -0.2
+          max_z: 3.0
+          vertical_fov_angle: 1.5
+          vertical_fov_padding: 0.08

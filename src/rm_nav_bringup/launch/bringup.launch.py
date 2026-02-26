@@ -54,6 +54,10 @@ def _launch_setup(context, *args, **kwargs):
     if use_stvl_override:
         os.environ['RM_NAV_USE_STVL'] = use_stvl_override
 
+    obstacle_profile_override = LaunchConfiguration('obstacle_profile').perform(context).strip()
+    if obstacle_profile_override:
+        os.environ['RM_NAV_OBSTACLE_PROFILE'] = obstacle_profile_override
+
     nav_start_delay_override = LaunchConfiguration('nav_start_delay').perform(context).strip()
 
     # 从 common 模块导入所有必要的变量和节点定义（导入时会读取 RM_NAV_MAP / RM_NAV_LOCALIZATION 覆盖）
@@ -276,8 +280,19 @@ def generate_launch_description():
             'use_stvl',
             default_value='',
             description=(
-                'Enable/disable STVL overlay for simulation global costmap '
+                'Enable/disable STVL for global costmap '
                 '(true|false). Empty uses config/launch_params.yaml.'
+            )
+        )
+    )
+
+    ld.add_action(
+        DeclareLaunchArgument(
+            'obstacle_profile',
+            default_value='',
+            description=(
+                'Obstacle filtering profile override (e.g. default|anti_self). '
+                'Empty uses config/launch_params.yaml.'
             )
         )
     )

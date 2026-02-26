@@ -1,0 +1,31 @@
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      # Suppress near-field self reflections around chassis/sensor mount.
+      obstacle_layer:
+        scan:
+          obstacle_min_range: 0.55
+          obstacle_max_range: 5.5
+          raytrace_max_range: 5.5
+        lidar_right:
+          obstacle_min_range: 0.70
+          obstacle_max_range: 3.5
+      inflation_layer:
+        inflation_radius: 0.55
+      always_send_full_costmap: false
+
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      always_send_full_costmap: false
+      # Applied when STVL overlay is enabled.
+      stvl_layer:
+        publish_voxel_map: false
+        voxel_decay: 0.35
+        transform_tolerance: 0.15
+        scan_mark:
+          obstacle_range: 3.0
+          observation_persistence: 0.08
+        livox_right_mark:
+          obstacle_range: 3.0
+          observation_persistence: 0.08

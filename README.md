@@ -26,7 +26,8 @@
 - `lio: fastlio`
 - `localization: slam_toolbox`
 - `controller: dwb`
-- `use_stvl: true`（仿真全局代价地图 STVL 开关）
+- `use_stvl: true`（全局代价地图 STVL 开关）
+- `obstacle_profile: default`（障碍过滤模板）
 
 注意：README 中所有示例都按以上默认主线编写；如你本地修改了 `launch_params.yaml`，以你的本地配置为准。
 
@@ -94,6 +95,7 @@ ros2 launch rm_nav_bringup bringup.launch.py \
   localization:=small_gicp \
   controller:=dwb \
   use_stvl:=true \
+  obstacle_profile:=default \
   nav_rviz:=false
 ```
 
@@ -103,10 +105,15 @@ ros2 launch rm_nav_bringup bringup.launch.py \
 - `lio:=fastlio|pointlio`
 - `localization:=amcl|slam_toolbox|icp|small_gicp`
 - `controller:=teb|dwb`
-- `use_stvl:=true|false`（仅仿真全局 costmap 生效）
+- `use_stvl:=true|false`（全局 costmap STVL 开关，仿真/实车均可）
+- `obstacle_profile:=default|anti_self`（障碍过滤模板，按 `config/<mode>` 下 profile 文件加载）
 - `nav_rviz:=true|false`
 - `nav_start_delay:=<seconds>`
 - `lidar_noise_stddev:=<float>`
+
+`anti_self` 对应文件：
+- 仿真：`src/rm_nav_bringup/config/simulation/nav2_obstacle_profile_anti_self.yaml` 与 `src/rm_nav_bringup/config/simulation/pointcloud_to_laserscan_anti_self.yaml`
+- 实车：`src/rm_nav_bringup/config/reality/nav2_obstacle_profile_anti_self.yaml` 与 `src/rm_nav_bringup/config/reality/pointcloud_to_laserscan_anti_self.yaml`
 
 ## 4. 关键运行约定
 
@@ -210,6 +217,8 @@ ros2 node list
 - `src/rm_nav_bringup/config/reality/MID360_config.json`（雷达网络与外参）
 - `src/rm_nav_bringup/config/reality/segmentation.yaml` / `segmentation_right.yaml`（地面分割）
 - `src/rm_nav_bringup/config/reality/nav2_params.yaml`（半径、速度、代价地图）
+- `src/rm_nav_bringup/config/reality/nav2_obstacle_profile_anti_self.yaml`（抗自体伪障碍模板）
+- `src/rm_nav_bringup/config/reality/pointcloud_to_laserscan_anti_self.yaml`（近场自体过滤模板）
 
 ## 9. 致谢
 
