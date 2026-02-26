@@ -291,7 +291,8 @@ def generate_launch_description():
             'obstacle_profile',
             default_value='',
             description=(
-                'Obstacle filtering profile override (e.g. default|anti_self). '
+                'Obstacle filtering profile override '
+                '(e.g. default|anti_self|anti_self_dualspot|anti_self_lowload|anti_self_wiring). '
                 'Empty uses config/launch_params.yaml.'
             )
         )

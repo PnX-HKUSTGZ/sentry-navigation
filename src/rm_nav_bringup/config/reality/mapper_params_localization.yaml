@@ -20,13 +20,14 @@ slam_toolbox:
 
     debug_logging: false
     throttle_scans: 1
-    transform_publish_period: 0.0002 #if 0 never publishes odometry
+    # 0.0002s(5000Hz) 会导致不必要的 TF 负载和时序抖动，实车改为 20Hz。
+    transform_publish_period: 0.05 #if 0 never publishes odometry
     map_update_interval: 5.0
     resolution: 0.05
     max_laser_range: 20.0 #for rastering images
     minimum_time_interval: 0.5
     transform_timeout: 0.5
-    tf_buffer_duration: 30.
+    tf_buffer_duration: 60.
     stack_size_to_use: 40000000 #// program needs a larger stack size to serialize large maps
 
     # General Parameters

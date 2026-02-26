@@ -7,18 +7,22 @@ ground_segmentation:
     n_bins: 120                 # number of radial bins.
     n_segments: 360             # number of radial segments.
 
-    max_dist_to_line: 0.1       # maximum vertical distance of point to line to be considered ground.
+    # Wave-road + chassis pitch/roll will increase apparent vertical residual.
+    max_dist_to_line: 0.14      # maximum vertical distance of point to line to be considered ground.
 
-    sensor_height: 0.44       # REAL sensor height above ground.
-    min_slope: -0.4             # minimum slope of a ground line.
-    max_slope: 0.4              # maximum slope of a ground line.
-    max_fit_error: 0.05         # maximum error of a point during line fit.
+    sensor_height: 0.44         # REAL sensor height above ground.
+    # Wave-road (peak-valley 0.07m, wavelength 0.24m) has max |slope| ~= 0.916.
+    # Keep margin so slope transitions are still classified as ground.
+    min_slope: -1.2             # minimum slope of a ground line.
+    max_slope: 1.2              # maximum slope of a ground line.
+    max_fit_error: 0.08         # maximum error of a point during line fit.
     long_threshold: 1.0         # distance between points after which they are considered far from each other.
-    max_long_height: 0.1        # maximum height change to previous point in long line.
+    max_long_height: 0.16       # maximum height change to previous point in long line.
     max_start_height: 0.5       # maximum difference to estimated ground height to start a new line.
     line_search_angle: 0.8      # how far to search in angular direction to find a line [rad].
 
-    gravity_aligned_frame: ""   # Frame which has its z axis aligned with gravity. (Sensor frame if empty.)
+    # Compensate chassis pitch/roll on wave-road; only rotate cloud into this frame.
+    gravity_aligned_frame: "odom"
 
     latch: false                # latch output topics or not
     visualize: false            # visualize segmentation result - USE ONLY FOR DEBUGGING

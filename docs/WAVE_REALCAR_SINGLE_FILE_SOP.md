@@ -48,6 +48,12 @@ ros2 topic pub --once /cmd_vel_chassis geometry_msgs/msg/Twist \
 ros2 launch rm_nav_bringup bringup.launch.py nav_rviz:=false obstacle_profile:=anti_self
 ```
 
+若现场出现 `queue is full` / `timestamp earlier than all data in transform cache`，切换低负载模板：
+
+```bash
+ros2 launch rm_nav_bringup bringup.launch.py nav_rviz:=false obstacle_profile:=anti_self_lowload
+```
+
 > 注：本 SOP 所有步骤都遵循“单入口 bringup”，不要手工另起第二套 map_server/lifecycle/nav2。
 
 ---
@@ -295,8 +301,9 @@ obstacle_profile=anti_self
 - 确保 `obstacle_profile:=anti_self`。  
 - 检查雷达安装角度、线束遮挡、近场反射。
 
-4. 多 RViz 导致高负载  
+4. 多 RViz 导致高负载
 - 测试时建议 `nav_rviz:=false`，只保留必要可视化。
+- 如果仍掉包，切 `obstacle_profile:=anti_self_lowload` 再复测。
 
 ---
 
@@ -310,4 +317,3 @@ ros2 topic pub --once /cmd_vel_chassis geometry_msgs/msg/Twist \
 # 停止录包（Ctrl+C）
 # 保存本次测试记录与 bag 路径
 ```
-

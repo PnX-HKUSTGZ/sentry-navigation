@@ -1,0 +1,22 @@
+pointcloud_to_laserscan:
+  ros__parameters:
+    target_frame: 'livox_frame'
+    transform_tolerance: 0.03
+    queue_size: 3
+    min_height: -1.0
+    # Keep low slice; suppress reflections around lidar cover / wiring height.
+    max_height: 0.03
+    angle_min: -3.14159  # -M_PI
+    angle_max: 3.14159   # M_PI
+    angle_increment: 0.0043
+    scan_time: 0.3333
+    range_min: 0.50
+    range_max: 10.0
+    use_inf: true
+    inf_epsilon: 1.0
+
+    # Wiring/body self-echo tends to appear in fixed sectors and near-field window.
+    exclude_range_min: 0.65
+    exclude_range_max: 1.45
+    # [front], [rear-left], [rear-right]
+    exclude_angle_ranges_deg: [-35.0, 35.0, 110.0, 150.0, -150.0, -110.0]

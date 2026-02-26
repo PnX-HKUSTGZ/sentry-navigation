@@ -106,14 +106,16 @@ ros2 launch rm_nav_bringup bringup.launch.py \
 - `localization:=amcl|slam_toolbox|icp|small_gicp`
 - `controller:=teb|dwb`
 - `use_stvl:=true|false`（全局 costmap STVL 开关，仿真/实车均可）
-- `obstacle_profile:=default|anti_self`（障碍过滤模板，按 `config/<mode>` 下 profile 文件加载）
+- `obstacle_profile:=default|anti_self|anti_self_strict|anti_self_lift_test|anti_self_dualspot|anti_self_lowload|anti_self_wiring`（障碍过滤模板，按 `config/<mode>` 下 profile 文件加载）
 - `nav_rviz:=true|false`
 - `nav_start_delay:=<seconds>`
 - `lidar_noise_stddev:=<float>`
 
-`anti_self` 对应文件：
-- 仿真：`src/rm_nav_bringup/config/simulation/nav2_obstacle_profile_anti_self.yaml` 与 `src/rm_nav_bringup/config/simulation/pointcloud_to_laserscan_anti_self.yaml`
-- 实车：`src/rm_nav_bringup/config/reality/nav2_obstacle_profile_anti_self.yaml` 与 `src/rm_nav_bringup/config/reality/pointcloud_to_laserscan_anti_self.yaml`
+常用 profile 对应文件（实车）：
+- `anti_self`：`src/rm_nav_bringup/config/reality/nav2_obstacle_profile_anti_self.yaml` + `src/rm_nav_bringup/config/reality/pointcloud_to_laserscan_anti_self.yaml`
+- `anti_self_dualspot`：`src/rm_nav_bringup/config/reality/nav2_obstacle_profile_anti_self_dualspot.yaml` + `src/rm_nav_bringup/config/reality/pointcloud_to_laserscan_anti_self_dualspot.yaml`
+- `anti_self_lowload`：`src/rm_nav_bringup/config/reality/nav2_obstacle_profile_anti_self_lowload.yaml` + `src/rm_nav_bringup/config/reality/pointcloud_to_laserscan_anti_self_lowload.yaml`
+- `anti_self_wiring`：`src/rm_nav_bringup/config/reality/nav2_obstacle_profile_anti_self_wiring.yaml` + `src/rm_nav_bringup/config/reality/pointcloud_to_laserscan_anti_self_wiring.yaml`
 
 ## 4. 关键运行约定
 
@@ -210,6 +212,13 @@ ros2 node list
 4. 动态避障不明显
 - 确认 `DYNAMIC_OBS_ENABLE=1` 且 `dynamic_obstacle.log` 有持续发布记录。
 - 检查 local costmap 是否包含 `obstacle_layer`，并确认障碍源 topic 有数据。
+
+5. 多 RViz 运行一段时间后地图停止更新（`queue is full` / `timestamp earlier than all data`）
+- 先只保留 1 个 RViz，关闭不必要显示（PointCloud2 / Path / Costmap）。
+- 启动时切换低负载模板：
+  `ros2 launch rm_nav_bringup bringup.launch.py obstacle_profile:=anti_self_lowload nav_rviz:=false`
+- 若仍有掉包，检查 CPU 占用与 TF 链时延：
+  `ros2 topic hz /scan`、`ros2 topic hz /tf`、`ros2 run tf2_ros tf2_monitor`
 
 ## 8. 实车迁移提示
 
