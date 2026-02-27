@@ -178,6 +178,37 @@ bash tools/stress_dynamic_nav.sh
 ./run_evaluation.sh --single-test
 ```
 
+### 5.4 波浪路段“轨迹契约”一键回归（推荐）
+
+目标：避免“Action 成功但没真正经过 8 个起伏”的误判。  
+脚本会自动完成：
+- 运行单入口导航回归（`stress_dynamic_nav.sh`）
+- 生成 `analysis_drift/loc_vs_ground_truth.csv`
+- 判定是否真实覆盖波浪段（按 `estimated_waves_crossed`）
+- 计算刚体对齐后的定位误差（过滤固定坐标偏置）
+- 输出 `contract_pass=1|0`
+
+```bash
+cd sentry-navigation
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+
+bash tools/run_wave8_contract_regression.sh
+```
+
+默认契约门限（可通过环境变量覆盖）：
+- `estimated_waves_crossed >= 7.5`
+- `inside_time_span_s >= 2.0`
+- `aligned_err_wave_p95_m <= 0.35`
+- `aligned_err_wave_max_m <= 0.55`
+- `summary_succeeded >= 1`（可通过 `REQUIRE_ACTION_SUCCESS=0` 关闭）
+
+结果文件：
+- 主报告：`artifacts/wave8_contract_<timestamp>/contract_report.txt`
+- Nav 过程：`artifacts/wave8_contract_<timestamp>/wave8_contract_stress.log`
+- 原始压力摘要：`artifacts/wave8_contract_<timestamp>/summary.txt`
+- 漂移图表：`artifacts/wave8_contract_<timestamp>/analysis_drift/`
+
 ## 6. 快速验收清单
 
 ```bash
