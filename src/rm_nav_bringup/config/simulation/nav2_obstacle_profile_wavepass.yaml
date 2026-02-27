@@ -13,4 +13,7 @@ local_costmap:
 global_costmap:
   global_costmap:
     ros__parameters:
+      # Keep global planning purely map-based for passability regression.
+      obstacle_layer:
+        enabled: false
       always_send_full_costmap: false

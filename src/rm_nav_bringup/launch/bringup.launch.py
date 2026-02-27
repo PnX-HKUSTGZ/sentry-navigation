@@ -25,6 +25,18 @@ from launch_ros.actions import Node
 sys.path.append(os.path.join(get_package_share_directory('rm_nav_bringup'), 'launch'))
 
 
+def _parse_bool_str(value: str, *, key: str) -> bool:
+    lowered = value.strip().lower()
+    if lowered in {"1", "true", "yes", "on"}:
+        return True
+    if lowered in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(
+        f"Invalid boolean launch arg {key}: {value!r}. "
+        "Allowed: 1/0/true/false/yes/no/on/off"
+    )
+
+
 def _launch_setup(context, *args, **kwargs):
     world_override = LaunchConfiguration('world').perform(context).strip()
     if world_override:
@@ -59,6 +71,7 @@ def _launch_setup(context, *args, **kwargs):
         os.environ['RM_NAV_OBSTACLE_PROFILE'] = obstacle_profile_override
 
     nav_start_delay_override = LaunchConfiguration('nav_start_delay').perform(context).strip()
+    enable_nav2_override = LaunchConfiguration('enable_nav2').perform(context).strip()
 
     # 从 common 模块导入所有必要的变量和节点定义（导入时会读取 RM_NAV_MAP / RM_NAV_LOCALIZATION 覆盖）
     from common import (
@@ -195,27 +208,35 @@ def _launch_setup(context, *args, **kwargs):
         actions.append(start_mapping_node)
 
     # 7. 导航系统
-    print("7. 启动Navigation2导航系统...")
-    if nav_start_delay_override:
-        try:
-            nav_start_delay = float(nav_start_delay_override)
-        except ValueError as exc:
-            raise ValueError(
-                f"Invalid nav_start_delay: '{nav_start_delay_override}'. Must be a float in seconds."
-            ) from exc
-    else:
-        # 仿真场景中 Gazebo 与机器人 spawn 通常慢于 Nav2，短延迟可避免 bt_navigator 配置超时。
-        # ICP/Small-GICP 需要等待首帧配准并发布 map->odom，给更保守的默认延迟。
-        if use_sim and localization in ("icp", "small_gicp"):
-            nav_start_delay = 12.0
-        else:
-            nav_start_delay = 8.0 if use_sim else 0.0
+    # 默认策略：导航模式启用 Nav2，建图模式关闭 Nav2（可通过 launch 参数覆盖）。
+    enable_nav2 = mode == "nav"
+    if enable_nav2_override:
+        enable_nav2 = _parse_bool_str(enable_nav2_override, key="enable_nav2")
 
-    if nav_start_delay > 0.0:
-        print(f"   Navigation2 将在 {nav_start_delay:.1f}s 后启动（等待仿真/TF稳定）...")
-        actions.append(TimerAction(period=nav_start_delay, actions=[start_navigation2]))
+    if enable_nav2:
+        print("7. 启动Navigation2导航系统...")
+        if nav_start_delay_override:
+            try:
+                nav_start_delay = float(nav_start_delay_override)
+            except ValueError as exc:
+                raise ValueError(
+                    f"Invalid nav_start_delay: '{nav_start_delay_override}'. Must be a float in seconds."
+                ) from exc
+        else:
+            # 仿真场景中 Gazebo 与机器人 spawn 通常慢于 Nav2，短延迟可避免 bt_navigator 配置超时。
+            # ICP/Small-GICP 需要等待首帧配准并发布 map->odom，给更保守的默认延迟。
+            if use_sim and localization in ("icp", "small_gicp"):
+                nav_start_delay = 12.0
+            else:
+                nav_start_delay = 8.0 if use_sim else 0.0
+
+        if nav_start_delay > 0.0:
+            print(f"   Navigation2 将在 {nav_start_delay:.1f}s 后启动（等待仿真/TF稳定）...")
+            actions.append(TimerAction(period=nav_start_delay, actions=[start_navigation2]))
+        else:
+            actions.append(start_navigation2)
     else:
-        actions.append(start_navigation2)
+        print("7. 跳过Navigation2（当前模式默认不启动；可用 enable_nav2:=true 强制开启）")
 
     print("哨兵导航系统启动完成！")
     return actions
@@ -314,6 +335,17 @@ def generate_launch_description():
             description=(
                 'Delay Navigation2 startup in seconds. Empty uses auto policy '
                 '(sim=8.0, sim+icp/small_gicp=12.0, real=0.0).'
+            )
+        )
+    )
+
+    ld.add_action(
+        DeclareLaunchArgument(
+            'enable_nav2',
+            default_value='',
+            description=(
+                'Enable/disable Navigation2 startup (true|false). '
+                'Empty uses mode-based policy: nav=true, mapping=false.'
             )
         )
     )

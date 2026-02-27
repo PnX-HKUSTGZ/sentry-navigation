@@ -57,6 +57,7 @@ private:
   double local_plan_timeout_sec_{0.5};
   int tf_publish_frequency_{20};
   bool has_local_plan_{false};
+  bool use_local_plan_transform_{true};
   float spin_speed_{0.0F};
 };
 

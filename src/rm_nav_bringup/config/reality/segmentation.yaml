@@ -21,8 +21,8 @@ ground_segmentation:
     max_start_height: 0.5       # maximum difference to estimated ground height to start a new line.
     line_search_angle: 0.8      # how far to search in angular direction to find a line [rad].
 
-    # Compensate chassis pitch/roll on wave-road; only rotate cloud into this frame.
-    gravity_aligned_frame: "odom"
+    # Keep sensor-frame segmentation by default; gravity frame can be noisy on real runs.
+    gravity_aligned_frame: ""
 
     latch: false                # latch output topics or not
     visualize: false            # visualize segmentation result - USE ONLY FOR DEBUGGING

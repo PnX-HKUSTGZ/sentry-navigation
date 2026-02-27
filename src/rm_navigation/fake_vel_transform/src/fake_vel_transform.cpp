@@ -19,6 +19,7 @@ FakeVelTransform::FakeVelTransform(const rclcpp::NodeOptions & options)
 
   // Runtime parameters
   this->declare_parameter<float>("spin_speed", -6.0);
+  this->declare_parameter<bool>("use_local_plan_transform", true);
   this->declare_parameter<int>("tf_publish_frequency", 20);
   this->declare_parameter<double>("local_plan_timeout_sec", 0.5);
   this->declare_parameter<std::string>("odom_frame", "odom");
@@ -29,6 +30,7 @@ FakeVelTransform::FakeVelTransform(const rclcpp::NodeOptions & options)
   this->declare_parameter<std::string>("local_plan_topic", "/local_plan");
 
   this->get_parameter("spin_speed", spin_speed_);
+  this->get_parameter("use_local_plan_transform", use_local_plan_transform_);
   this->get_parameter("tf_publish_frequency", tf_publish_frequency_);
   this->get_parameter("local_plan_timeout_sec", local_plan_timeout_sec_);
   this->get_parameter("odom_frame", odom_frame_);
@@ -69,9 +71,9 @@ FakeVelTransform::FakeVelTransform(const rclcpp::NodeOptions & options)
 
   RCLCPP_INFO(
     get_logger(),
-    "Frames: %s -> %s, lookup %s -> %s, local_plan_timeout=%.2fs",
+    "Frames: %s -> %s, lookup %s -> %s, local_plan_timeout=%.2fs, use_local_plan_transform=%s",
     base_frame_.c_str(), fake_base_frame_.c_str(), odom_frame_.c_str(), base_frame_.c_str(),
-    local_plan_timeout_sec_);
+    local_plan_timeout_sec_, use_local_plan_transform_ ? "true" : "false");
 }
 
 // Get the local pose from planner
@@ -110,17 +112,22 @@ void FakeVelTransform::cmdVelCallback(const geometry_msgs::msg::Twist::SharedPtr
 
     const auto now = this->now();
     const bool local_plan_fresh =
-      has_local_plan_ &&
+      use_local_plan_transform_ && has_local_plan_ &&
       ((now - last_local_plan_stamp_).seconds() <= local_plan_timeout_sec_);
     const double angle_diff = local_plan_fresh ? -current_angle_ : 0.0;
-    if (!local_plan_fresh) {
+    if (use_local_plan_transform_ && !local_plan_fresh) {
       RCLCPP_WARN_THROTTLE(
         get_logger(), *get_clock(), 2000,
         "No fresh local plan, fallback to base frame cmd_vel passthrough");
     }
 
     geometry_msgs::msg::Twist aft_tf_vel;
-    aft_tf_vel.angular.z = (msg->angular.z != 0) ? spin_speed_ : 0;
+    // spin_speed_ != 0 keeps legacy fixed-spin behavior; spin_speed_ == 0 passthroughs planner yaw.
+    if (std::abs(spin_speed_) > 1e-6F) {
+      aft_tf_vel.angular.z = (msg->angular.z != 0.0F) ? spin_speed_ : 0.0F;
+    } else {
+      aft_tf_vel.angular.z = msg->angular.z;
+    }
     aft_tf_vel.linear.x = msg->linear.x * cos(angle_diff) + msg->linear.y * sin(angle_diff);
     aft_tf_vel.linear.y = -msg->linear.x * sin(angle_diff) + msg->linear.y * cos(angle_diff);
 
@@ -135,7 +142,7 @@ void FakeVelTransform::publishTransform()
 {
   const auto now = this->now();
   const bool local_plan_fresh =
-    has_local_plan_ &&
+    use_local_plan_transform_ && has_local_plan_ &&
     ((now - last_local_plan_stamp_).seconds() <= local_plan_timeout_sec_);
   const double publish_yaw = local_plan_fresh ? current_angle_ : 0.0;
 

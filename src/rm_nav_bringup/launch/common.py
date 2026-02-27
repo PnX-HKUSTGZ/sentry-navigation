@@ -736,7 +736,10 @@ bringup_fake_vel_transform_node = Node(
     output='screen',
     parameters=[{
         'use_sim_time': use_sim_time_param,
-        'spin_speed': 0.0,  # 旋转速度 (rad/s)
+        'spin_speed': 0.0,  # 0.0=透传/cmd_vel角速度；非0=固定旋转速度(rad/s)
+        # In simulation, Nav2 cmd_vel is already in base frame; disable plan-based rotation.
+        # Real robot keeps this enabled for chassis decoupling.
+        'use_local_plan_transform': (not use_sim),
         'tf_publish_frequency': 20,
         'local_plan_timeout_sec': 0.5,
         'odom_frame': 'odom',

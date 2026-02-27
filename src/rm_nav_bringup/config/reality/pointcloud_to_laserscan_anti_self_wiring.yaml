@@ -2,13 +2,14 @@ pointcloud_to_laserscan:
   ros__parameters:
     target_frame: 'livox_frame'
     transform_tolerance: 0.03
-    queue_size: 3
+    queue_size: 2
     min_height: -1.0
     # Keep low slice; suppress reflections around lidar cover / wiring height.
     max_height: 0.03
     angle_min: -3.14159  # -M_PI
     angle_max: 3.14159   # M_PI
-    angle_increment: 0.0043
+    # Lower angular density to reduce CPU/load in long runs.
+    angle_increment: 0.01047
     scan_time: 0.3333
     range_min: 0.50
     range_max: 10.0

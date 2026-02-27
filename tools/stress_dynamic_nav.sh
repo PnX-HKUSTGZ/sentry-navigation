@@ -22,11 +22,13 @@ DRY_RUN="${DRY_RUN:-0}"
 USE_ROBOSTACK="${USE_ROBOSTACK:-0}"
 ACTION_NAME="${ACTION_NAME:-}"
 CONTROLLER="${CONTROLLER:-}"
+OBSTACLE_PROFILE="${OBSTACLE_PROFILE:-}"
 NAV_START_DELAY="${NAV_START_DELAY:-}"
 LIDAR_NOISE_STDDEV="${LIDAR_NOISE_STDDEV:-}"
 STARTUP_SETTLE_SEC="${STARTUP_SETTLE_SEC:-3}"
 ACTION_WAIT_TIMEOUT="${ACTION_WAIT_TIMEOUT:-90}"
 AMCL_POSE_WAIT_TIMEOUT="${AMCL_POSE_WAIT_TIMEOUT:-25}"
+AMCL_INIT_XY_TOL="${AMCL_INIT_XY_TOL:-}"   # empty => disable init-pose proximity gate
 ODOM_WAIT_TIMEOUT="${ODOM_WAIT_TIMEOUT:-35}"
 ODOM_TOPIC="${ODOM_TOPIC:-auto}"  # auto => probe /Odometry -> /odom (ground truth fallback is opt-in)
 ODOM_TOPIC_CANDIDATES="${ODOM_TOPIC_CANDIDATES:-/Odometry /odom}"
@@ -43,6 +45,10 @@ BAG_RECORD="${BAG_RECORD:-0}"
 BAG_TOPICS="${BAG_TOPICS:-/clock /tf /tf_static /livox/lidar/pointcloud /Odometry /initialpose}"
 BAG_STORAGE="${BAG_STORAGE:-sqlite3}"
 BAG_OUTPUT="${BAG_OUTPUT:-}"
+GT_TRACE_RECORD="${GT_TRACE_RECORD:-0}"
+GT_TRACE_TOPIC="${GT_TRACE_TOPIC:-/ground_truth/odom}"
+GT_TRACE_FIELD="${GT_TRACE_FIELD:-pose.pose.position}"
+GT_TRACE_OUTPUT="${GT_TRACE_OUTPUT:-}"
 CLEAR_COSTMAP_BEFORE_GOAL="${CLEAR_COSTMAP_BEFORE_GOAL:-0}"
 GOAL_OCCUPANCY_POLICY="${GOAL_OCCUPANCY_POLICY:-reject}"  # off|warn|reject|snap
 GOAL_NEAREST_RADIUS="${GOAL_NEAREST_RADIUS:-1.5}"
@@ -71,8 +77,45 @@ DYNAMIC_OBS_SET_SERVICE="${DYNAMIC_OBS_SET_SERVICE:-/gazebo/set_entity_state}"
 DYNAMIC_OBS_DELETE_SERVICE="${DYNAMIC_OBS_DELETE_SERVICE:-/delete_entity}"
 SPEED_LIMIT_MPS="${SPEED_LIMIT_MPS:-}"               # empty => no runtime speed-limit override
 SPEED_LIMIT_PERCENTAGE="${SPEED_LIMIT_PERCENTAGE:-0}" # 0 => absolute m/s, 1 => percentage (0~100)
+GOAL_XY_TOLERANCE="${GOAL_XY_TOLERANCE:-}"           # empty => keep Nav2 default
+GOAL_YAW_TOLERANCE="${GOAL_YAW_TOLERANCE:-}"         # empty => keep Nav2 default
+PROGRESS_REQUIRED_RADIUS="${PROGRESS_REQUIRED_RADIUS:-}"      # empty => keep Nav2 default
+PROGRESS_TIME_ALLOWANCE="${PROGRESS_TIME_ALLOWANCE:-}"        # empty => keep Nav2 default
+CONTROLLER_FAILURE_TOLERANCE="${CONTROLLER_FAILURE_TOLERANCE:-}"  # empty => keep Nav2 default
+DWB_MAX_VEL_Y="${DWB_MAX_VEL_Y:-}"               # empty => keep Nav2 default
+DWB_MIN_VEL_Y="${DWB_MIN_VEL_Y:-}"               # empty => keep Nav2 default
+DWB_VY_SAMPLES="${DWB_VY_SAMPLES:-}"             # empty => keep Nav2 default
+DWB_MAX_VEL_X="${DWB_MAX_VEL_X:-}"               # empty => keep Nav2 default
+DWB_MIN_VEL_X="${DWB_MIN_VEL_X:-}"               # empty => keep Nav2 default
 BRINGUP_RETRY_COUNT="${BRINGUP_RETRY_COUNT:-2}"      # retries when bringup launches but action server never appears
 BRINGUP_RETRY_BACKOFF_SEC="${BRINGUP_RETRY_BACKOFF_SEC:-4}"
+
+# Wave-passability regression defaults.
+# Keep deterministic even when launch_params.yaml has STVL enabled.
+if [[ -z "${OBSTACLE_PROFILE}" && -n "${RM_NAV_OBSTACLE_PROFILE:-}" ]]; then
+  OBSTACLE_PROFILE="${RM_NAV_OBSTACLE_PROFILE}"
+fi
+if [[ "${BRINGUP_WORLD}" == "RMUL_26_WAVE" || "${BRINGUP_MAP}" == "RMUL26_WAVE" ]]; then
+  if [[ -z "${NAV_USE_STVL}" ]]; then
+    NAV_USE_STVL=0
+  fi
+  if [[ -z "${OBSTACLE_PROFILE}" ]]; then
+    OBSTACLE_PROFILE="wavepass"
+  fi
+  if [[ -z "${AMCL_INIT_XY_TOL}" ]]; then
+    AMCL_INIT_XY_TOL=0.45
+  fi
+  # On wave-pass regression, reduce lateral aggressiveness to avoid drift-induced progress failures.
+  if [[ -z "${DWB_MAX_VEL_Y}" ]]; then
+    DWB_MAX_VEL_Y=0.15
+  fi
+  if [[ -z "${DWB_MIN_VEL_Y}" ]]; then
+    DWB_MIN_VEL_Y=-0.15
+  fi
+  if [[ -z "${DWB_VY_SAMPLES}" ]]; then
+    DWB_VY_SAMPLES=5
+  fi
+fi
 
 # ICP/small-gicp need extra bootstrap time for map->odom before Nav2 lifecycle bringup.
 if [[ -z "${NAV_START_DELAY}" ]]; then
@@ -106,13 +149,32 @@ if [[ "${ALLOW_GROUND_TRUTH_ODOM_FALLBACK}" == "1" ]]; then
 fi
 
 # Default to RMUL_26 simulation spawn pose to reduce bootstrap mismatch.
-INIT_X="${INIT_X:--5.375}"
-INIT_Y="${INIT_Y:-3.425}"
-INIT_QZ="${INIT_QZ:--0.2798765}"
-INIT_QW="${INIT_QW:-0.9600360}"
+# For RMUL_26_WAVE, use a map-free initialpose close to wave strip entry to
+# avoid "Starting point in lethal space" on first planning cycle.
+if [[ -z "${INIT_X:-}" || -z "${INIT_Y:-}" || -z "${INIT_QZ:-}" || -z "${INIT_QW:-}" ]]; then
+  if [[ "${BRINGUP_WORLD}" == "RMUL_26_WAVE" || "${BRINGUP_MAP}" == "RMUL26_WAVE" ]]; then
+    # Keep aligned with RMUL2026_wave.world spawn and free-map corridor centerline.
+    INIT_X="${INIT_X:--1.42}"
+    INIT_Y="${INIT_Y:-2.75}"
+    INIT_QZ="${INIT_QZ:-0.0}"
+    INIT_QW="${INIT_QW:-1.0}"
+  else
+    INIT_X="${INIT_X:--5.375}"
+    INIT_Y="${INIT_Y:-3.425}"
+    INIT_QZ="${INIT_QZ:--0.2798765}"
+    INIT_QW="${INIT_QW:-0.9600360}"
+  fi
+fi
 
 # x,y,qz,qw; x,y,qz,qw; ...
-WAYPOINTS="${WAYPOINTS:--5.0,3.0,0.0,1.0; -2.0,2.0,0.0,1.0; 0.0,0.0,0.0,1.0; 1.8,-1.2,0.0,1.0; -0.8,0.8,0.0,1.0; -5.0,3.0,0.0,1.0}"
+if [[ -z "${WAYPOINTS:-}" ]]; then
+  if [[ "${BRINGUP_WORLD}" == "RMUL_26_WAVE" || "${BRINGUP_MAP}" == "RMUL26_WAVE" ]]; then
+    # One full wave crossing + return to entry side.
+    WAYPOINTS="1.90,2.75,0.0,1.0; -1.42,2.75,0.0,1.0"
+  else
+    WAYPOINTS="-5.0,3.0,0.0,1.0; -2.0,2.0,0.0,1.0; 0.0,0.0,0.0,1.0; 1.8,-1.2,0.0,1.0; -0.8,0.8,0.0,1.0; -5.0,3.0,0.0,1.0"
+  fi
+fi
 
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 ARTIFACT_DIR="${ARTIFACT_DIR:-${WS_DIR}/artifacts/nav_stress_${TIMESTAMP}}"
@@ -141,6 +203,7 @@ if [[ "${DRY_RUN}" == "1" ]]; then
   echo "  map=${BRINGUP_MAP:-<config/world default>}"
   echo "  lio=${BRINGUP_LIO:-<config default>}"
   echo "  use_stvl=${NAV_USE_STVL:-<config default>}"
+  echo "  obstacle_profile=${OBSTACLE_PROFILE:-<config default>}"
   echo "  clear_costmap_before_goal=${CLEAR_COSTMAP_BEFORE_GOAL}"
   echo "  goal_occupancy_policy=${GOAL_OCCUPANCY_POLICY}"
   echo "  goal_nearest_radius=${GOAL_NEAREST_RADIUS}m"
@@ -150,6 +213,7 @@ if [[ "${DRY_RUN}" == "1" ]]; then
   echo "  lidar_noise_stddev=${LIDAR_NOISE_STDDEV:-<config default>}"
   echo "  action_wait_timeout=${ACTION_WAIT_TIMEOUT}s"
   echo "  amcl_pose_wait_timeout=${AMCL_POSE_WAIT_TIMEOUT}s"
+  echo "  amcl_init_xy_tol=${AMCL_INIT_XY_TOL:-<disabled>}"
   echo "  odom_wait_timeout=${ODOM_WAIT_TIMEOUT}s"
   echo "  odom_topic=${ODOM_TOPIC} (candidates: ${ODOM_TOPIC_CANDIDATES})"
   echo "  allow_ground_truth_odom_fallback=${ALLOW_GROUND_TRUTH_ODOM_FALLBACK}"
@@ -166,12 +230,26 @@ if [[ "${DRY_RUN}" == "1" ]]; then
   echo "  dynamic_obstacle_topic=${DYNAMIC_OBS_TOPIC} frame=${DYNAMIC_OBS_FRAME_ID}"
   echo "  speed_limit_mps=${SPEED_LIMIT_MPS:-<disabled>}"
   echo "  speed_limit_percentage=${SPEED_LIMIT_PERCENTAGE}"
+  echo "  goal_xy_tolerance=${GOAL_XY_TOLERANCE:-<default>}"
+  echo "  goal_yaw_tolerance=${GOAL_YAW_TOLERANCE:-<default>}"
+  echo "  progress_required_radius=${PROGRESS_REQUIRED_RADIUS:-<default>}"
+  echo "  progress_time_allowance=${PROGRESS_TIME_ALLOWANCE:-<default>}"
+  echo "  controller_failure_tolerance=${CONTROLLER_FAILURE_TOLERANCE:-<default>}"
+  echo "  dwb_max_vel_y=${DWB_MAX_VEL_Y:-<default>}"
+  echo "  dwb_min_vel_y=${DWB_MIN_VEL_Y:-<default>}"
+  echo "  dwb_vy_samples=${DWB_VY_SAMPLES:-<default>}"
+  echo "  dwb_max_vel_x=${DWB_MAX_VEL_X:-<default>}"
+  echo "  dwb_min_vel_x=${DWB_MIN_VEL_X:-<default>}"
   echo "  bringup_retry_count=${BRINGUP_RETRY_COUNT}"
   echo "  bringup_retry_backoff_sec=${BRINGUP_RETRY_BACKOFF_SEC}"
   echo "  bag_record=${BAG_RECORD}"
   echo "  bag_topics=${BAG_TOPICS}"
   echo "  bag_storage=${BAG_STORAGE}"
   echo "  bag_output=${BAG_OUTPUT:-<artifact>/rosbag_dataset}"
+  echo "  gt_trace_record=${GT_TRACE_RECORD}"
+  echo "  gt_trace_topic=${GT_TRACE_TOPIC}"
+  echo "  gt_trace_field=${GT_TRACE_FIELD}"
+  echo "  gt_trace_output=${GT_TRACE_OUTPUT:-<artifact>/ground_truth_pose.csv}"
   echo "  nav_rviz=${NAV_RVIZ}"
   echo "  init_pose=(${INIT_X}, ${INIT_Y}, ${INIT_QZ}, ${INIT_QW})"
   echo "  waypoints=${WAYPOINTS}"
@@ -263,6 +341,7 @@ ros2 daemon start >/dev/null 2>&1 || true
 BRINGUP_PID=""
 BAG_PID=""
 DYNAMIC_OBS_PID=""
+GT_TRACE_PID=""
 MAP_TF_READY=0
 LAUNCH_CMD=()
 BRINGUP_LOG="${ARTIFACT_DIR}/bringup.log"
@@ -342,12 +421,40 @@ start_bag_recording() {
   return 0
 }
 
+start_gt_trace_recording() {
+  if [[ "${GT_TRACE_RECORD}" != "1" ]]; then
+    return 0
+  fi
+  if [[ -z "${GT_TRACE_OUTPUT}" ]]; then
+    GT_TRACE_OUTPUT="${ARTIFACT_DIR}/ground_truth_pose.csv"
+  fi
+  mkdir -p "$(dirname "${GT_TRACE_OUTPUT}")"
+  : > "${GT_TRACE_OUTPUT}"
+  echo "[gt-trace] topic=${GT_TRACE_TOPIC} field=${GT_TRACE_FIELD}"
+  echo "[gt-trace] output=${GT_TRACE_OUTPUT}"
+  setsid ros2 topic echo "${GT_TRACE_TOPIC}" --csv --field "${GT_TRACE_FIELD}" \
+    > "${GT_TRACE_OUTPUT}" 2> "${ARTIFACT_DIR}/ground_truth_trace.log" &
+  GT_TRACE_PID=$!
+  sleep 1
+  if ! kill -0 "${GT_TRACE_PID}" 2>/dev/null; then
+    echo "[ERROR] ground-truth trace recorder exited early, check ${ARTIFACT_DIR}/ground_truth_trace.log" >&2
+    return 1
+  fi
+  return 0
+}
+
 cleanup() {
   if [[ -n "${DYNAMIC_OBS_PID}" ]] && kill -0 "${DYNAMIC_OBS_PID}" 2>/dev/null; then
     echo "[cleanup] stopping dynamic obstacle driver pgid=${DYNAMIC_OBS_PID}" >&2
     kill -- "-${DYNAMIC_OBS_PID}" 2>/dev/null || kill "${DYNAMIC_OBS_PID}" 2>/dev/null || true
     sleep 1
     kill -9 -- "-${DYNAMIC_OBS_PID}" 2>/dev/null || kill -9 "${DYNAMIC_OBS_PID}" 2>/dev/null || true
+  fi
+  if [[ -n "${GT_TRACE_PID}" ]] && kill -0 "${GT_TRACE_PID}" 2>/dev/null; then
+    echo "[cleanup] stopping ground-truth trace recorder pgid=${GT_TRACE_PID}" >&2
+    kill -- "-${GT_TRACE_PID}" 2>/dev/null || kill "${GT_TRACE_PID}" 2>/dev/null || true
+    sleep 1
+    kill -9 -- "-${GT_TRACE_PID}" 2>/dev/null || kill -9 "${GT_TRACE_PID}" 2>/dev/null || true
   fi
   if [[ -n "${BAG_PID}" ]] && kill -0 "${BAG_PID}" 2>/dev/null; then
     echo "[cleanup] stopping rosbag recorder pgid=${BAG_PID}" >&2
@@ -391,6 +498,56 @@ wait_for_amcl_pose() {
     fi
     sleep 0.25
   done
+  return 1
+}
+
+get_amcl_xy_once() {
+  local raw x y
+  raw="$(timeout 2 ros2 topic echo /amcl_pose --once --field pose.pose.position 2>/dev/null || true)"
+  x="$(echo "${raw}" | grep -Eo '[-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?' | sed -n '1p')"
+  y="$(echo "${raw}" | grep -Eo '[-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?' | sed -n '2p')"
+  if [[ -z "${x}" || -z "${y}" ]]; then
+    return 1
+  fi
+  printf '%s,%s' "${x}" "${y}"
+}
+
+amcl_xy_dist_to_init() {
+  local ax="$1"
+  local ay="$2"
+  awk -v ax="${ax}" -v ay="${ay}" -v ix="${INIT_X}" -v iy="${INIT_Y}" 'BEGIN{dx=ax-ix; dy=ay-iy; printf "%.4f", sqrt(dx*dx+dy*dy)}'
+}
+
+wait_for_amcl_pose_near_init() {
+  local timeout_s="$1"
+  local tol_m="$2"
+  local loops=$((timeout_s * 2))
+  local i
+  local xy
+  local ax
+  local ay
+  local dist
+
+  for ((i = 1; i <= loops; i++)); do
+    xy="$(get_amcl_xy_once || true)"
+    if [[ -n "${xy}" ]]; then
+      IFS=',' read -r ax ay <<< "${xy}"
+      dist="$(amcl_xy_dist_to_init "${ax}" "${ay}")"
+      if awk -v d="${dist}" -v t="${tol_m}" 'BEGIN{exit !(d <= t)}'; then
+        echo "[INFO] AMCL gate passed: amcl=(${ax}, ${ay}) init=(${INIT_X}, ${INIT_Y}) dist=${dist}m <= ${tol_m}m"
+        return 0
+      fi
+    fi
+    sleep 0.5
+  done
+
+  if [[ -n "${xy}" ]]; then
+    IFS=',' read -r ax ay <<< "${xy}"
+    dist="$(amcl_xy_dist_to_init "${ax}" "${ay}")"
+    echo "[WARN] AMCL gate not met: amcl=(${ax}, ${ay}) init=(${INIT_X}, ${INIT_Y}) dist=${dist}m > ${tol_m}m" >&2
+  else
+    echo "[WARN] AMCL gate not met: /amcl_pose sample unavailable" >&2
+  fi
   return 1
 }
 
@@ -596,6 +753,195 @@ apply_controller_speed_limit() {
   return 0
 }
 
+apply_goal_checker_tolerances() {
+  local xy_tol="$1"
+  local yaw_tol="$2"
+  local attempt
+
+  if [[ -n "${xy_tol}" ]]; then
+    local xy_ok=0
+    for attempt in 1 2 3 4 5 6; do
+      if timeout 3 ros2 param set /controller_server "general_goal_checker.xy_goal_tolerance" "${xy_tol}" >/dev/null 2>&1 \
+        && timeout 3 ros2 param set /controller_server "FollowPath.xy_goal_tolerance" "${xy_tol}" >/dev/null 2>&1; then
+        xy_ok=1
+        break
+      fi
+      sleep 1
+    done
+    if [[ "${xy_ok}" == "1" ]]; then
+      echo "[INFO] applied goal XY tolerance override: ${xy_tol}"
+    else
+      echo "[WARN] failed to apply goal XY tolerance override: ${xy_tol}" >&2
+    fi
+  fi
+
+  if [[ -n "${yaw_tol}" ]]; then
+    local yaw_ok=0
+    for attempt in 1 2 3 4 5 6; do
+      if timeout 3 ros2 param set /controller_server "general_goal_checker.yaw_goal_tolerance" "${yaw_tol}" >/dev/null 2>&1; then
+        yaw_ok=1
+        break
+      fi
+      sleep 1
+    done
+    if [[ "${yaw_ok}" == "1" ]]; then
+      echo "[INFO] applied goal yaw tolerance override: ${yaw_tol}"
+    else
+      echo "[WARN] failed to apply goal yaw tolerance override: ${yaw_tol}" >&2
+    fi
+  fi
+
+  return 0
+}
+
+apply_progress_checker_overrides() {
+  local required_radius="$1"
+  local time_allowance="$2"
+  local failure_tol="$3"
+  local attempt
+
+  if [[ -n "${required_radius}" ]]; then
+    local ok=0
+    for attempt in 1 2 3 4 5 6; do
+      if timeout 3 ros2 param set /controller_server "progress_checker.required_movement_radius" "${required_radius}" >/dev/null 2>&1; then
+        ok=1
+        break
+      fi
+      sleep 1
+    done
+    if [[ "${ok}" == "1" ]]; then
+      echo "[INFO] applied progress required radius override: ${required_radius}"
+    else
+      echo "[WARN] failed to apply progress required radius override: ${required_radius}" >&2
+    fi
+  fi
+
+  if [[ -n "${time_allowance}" ]]; then
+    local ok=0
+    for attempt in 1 2 3 4 5 6; do
+      if timeout 3 ros2 param set /controller_server "progress_checker.movement_time_allowance" "${time_allowance}" >/dev/null 2>&1; then
+        ok=1
+        break
+      fi
+      sleep 1
+    done
+    if [[ "${ok}" == "1" ]]; then
+      echo "[INFO] applied progress time allowance override: ${time_allowance}"
+    else
+      echo "[WARN] failed to apply progress time allowance override: ${time_allowance}" >&2
+    fi
+  fi
+
+  if [[ -n "${failure_tol}" ]]; then
+    local ok=0
+    for attempt in 1 2 3 4 5 6; do
+      if timeout 3 ros2 param set /controller_server "failure_tolerance" "${failure_tol}" >/dev/null 2>&1; then
+        ok=1
+        break
+      fi
+      sleep 1
+    done
+    if [[ "${ok}" == "1" ]]; then
+      echo "[INFO] applied controller failure tolerance override: ${failure_tol}"
+    else
+      echo "[WARN] failed to apply controller failure tolerance override: ${failure_tol}" >&2
+    fi
+  fi
+
+  return 0
+}
+
+apply_dwb_velocity_limits() {
+  local max_vx="$1"
+  local min_vx="$2"
+  local max_vy="$3"
+  local min_vy="$4"
+  local vy_samples="$5"
+  local attempt
+
+  if [[ -n "${max_vx}" ]]; then
+    local ok=0
+    for attempt in 1 2 3 4 5 6; do
+      if timeout 3 ros2 param set /controller_server "FollowPath.max_vel_x" "${max_vx}" >/dev/null 2>&1; then
+        ok=1
+        break
+      fi
+      sleep 1
+    done
+    if [[ "${ok}" == "1" ]]; then
+      echo "[INFO] applied DWB max_vel_x override: ${max_vx}"
+    else
+      echo "[WARN] failed to apply DWB max_vel_x override: ${max_vx}" >&2
+    fi
+  fi
+
+  if [[ -n "${min_vx}" ]]; then
+    local ok=0
+    for attempt in 1 2 3 4 5 6; do
+      if timeout 3 ros2 param set /controller_server "FollowPath.min_vel_x" "${min_vx}" >/dev/null 2>&1; then
+        ok=1
+        break
+      fi
+      sleep 1
+    done
+    if [[ "${ok}" == "1" ]]; then
+      echo "[INFO] applied DWB min_vel_x override: ${min_vx}"
+    else
+      echo "[WARN] failed to apply DWB min_vel_x override: ${min_vx}" >&2
+    fi
+  fi
+
+  if [[ -n "${max_vy}" ]]; then
+    local ok=0
+    for attempt in 1 2 3 4 5 6; do
+      if timeout 3 ros2 param set /controller_server "FollowPath.max_vel_y" "${max_vy}" >/dev/null 2>&1; then
+        ok=1
+        break
+      fi
+      sleep 1
+    done
+    if [[ "${ok}" == "1" ]]; then
+      echo "[INFO] applied DWB max_vel_y override: ${max_vy}"
+    else
+      echo "[WARN] failed to apply DWB max_vel_y override: ${max_vy}" >&2
+    fi
+  fi
+
+  if [[ -n "${min_vy}" ]]; then
+    local ok=0
+    for attempt in 1 2 3 4 5 6; do
+      if timeout 3 ros2 param set /controller_server "FollowPath.min_vel_y" "${min_vy}" >/dev/null 2>&1; then
+        ok=1
+        break
+      fi
+      sleep 1
+    done
+    if [[ "${ok}" == "1" ]]; then
+      echo "[INFO] applied DWB min_vel_y override: ${min_vy}"
+    else
+      echo "[WARN] failed to apply DWB min_vel_y override: ${min_vy}" >&2
+    fi
+  fi
+
+  if [[ -n "${vy_samples}" ]]; then
+    local ok=0
+    for attempt in 1 2 3 4 5 6; do
+      if timeout 3 ros2 param set /controller_server "FollowPath.vy_samples" "${vy_samples}" >/dev/null 2>&1; then
+        ok=1
+        break
+      fi
+      sleep 1
+    done
+    if [[ "${ok}" == "1" ]]; then
+      echo "[INFO] applied DWB vy_samples override: ${vy_samples}"
+    else
+      echo "[WARN] failed to apply DWB vy_samples override: ${vy_samples}" >&2
+    fi
+  fi
+
+  return 0
+}
+
 publish_initialpose() {
   timeout 4 ros2 topic pub --rate 5 /initialpose geometry_msgs/msg/PoseWithCovarianceStamped \
     "{header: {frame_id: 'map', stamp: {sec: 0, nanosec: 0}}, pose: {pose: {position: {x: ${INIT_X}, y: ${INIT_Y}, z: 0.0}, orientation: {x: 0.0, y: 0.0, z: ${INIT_QZ}, w: ${INIT_QW}}}}}" \
@@ -714,9 +1060,10 @@ start_dynamic_obstacle() {
 }
 
 if [[ "${LAUNCH_BRINGUP}" == "1" ]]; then
-  if ros2 node list 2>/dev/null | grep -q .; then
+  existing_nodes="$(ros2 node list 2>/dev/null | sed '/^\/static_transform_publisher_/d' || true)"
+  if echo "${existing_nodes}" | grep -q .; then
     echo "[ERROR] ROS graph is not clean while LAUNCH_BRINGUP=1." >&2
-    ros2 node list 2>/dev/null | sed 's/^/  /' >&2
+    echo "${existing_nodes}" | sed 's/^/  /' >&2
     exit 2
   fi
   echo "[1/5] Launch bringup (single entrypoint)"
@@ -732,6 +1079,9 @@ if [[ "${LAUNCH_BRINGUP}" == "1" ]]; then
   fi
   if [[ -n "${NAV_USE_STVL}" ]]; then
     LAUNCH_CMD+=("use_stvl:=${NAV_USE_STVL}")
+  fi
+  if [[ -n "${OBSTACLE_PROFILE}" ]]; then
+    LAUNCH_CMD+=("obstacle_profile:=${OBSTACLE_PROFILE}")
   fi
   if [[ -n "${CONTROLLER}" ]]; then
     LAUNCH_CMD+=("controller:=${CONTROLLER}")
@@ -860,6 +1210,18 @@ if [[ "${LOCALIZATION}" == "amcl" ]]; then
   fi
   echo "[INFO] /amcl_pose ready."
 
+  if [[ -n "${AMCL_INIT_XY_TOL}" ]]; then
+    echo "[INFO] AMCL init gate enabled, tol=${AMCL_INIT_XY_TOL}m"
+    if ! wait_for_amcl_pose_near_init "${AMCL_POSE_WAIT_TIMEOUT}" "${AMCL_INIT_XY_TOL}"; then
+      echo "[WARN] AMCL init gate failed once; re-publish /initialpose and retry..." >&2
+      publish_initialpose
+      if ! wait_for_amcl_pose_near_init "${AMCL_POSE_WAIT_TIMEOUT}" "${AMCL_INIT_XY_TOL}"; then
+        echo "[ERROR] AMCL pose did not converge near initialpose." >&2
+        exit 8
+      fi
+    fi
+  fi
+
   echo "[INFO] Wait for Nav2 lifecycle nodes active (bt_navigator/controller_server)"
   if ! wait_for_lifecycle_active "/bt_navigator" 40; then
     echo "[ERROR] /bt_navigator not ACTIVE in time." >&2
@@ -877,6 +1239,15 @@ fi
 
 if [[ -n "${SPEED_LIMIT_MPS}" ]]; then
   apply_controller_speed_limit "${SPEED_LIMIT_MPS}" "${SPEED_LIMIT_PERCENTAGE}" || true
+fi
+if [[ -n "${GOAL_XY_TOLERANCE}" || -n "${GOAL_YAW_TOLERANCE}" ]]; then
+  apply_goal_checker_tolerances "${GOAL_XY_TOLERANCE}" "${GOAL_YAW_TOLERANCE}" || true
+fi
+if [[ -n "${PROGRESS_REQUIRED_RADIUS}" || -n "${PROGRESS_TIME_ALLOWANCE}" || -n "${CONTROLLER_FAILURE_TOLERANCE}" ]]; then
+  apply_progress_checker_overrides "${PROGRESS_REQUIRED_RADIUS}" "${PROGRESS_TIME_ALLOWANCE}" "${CONTROLLER_FAILURE_TOLERANCE}" || true
+fi
+if [[ -n "${DWB_MAX_VEL_X}" || -n "${DWB_MIN_VEL_X}" || -n "${DWB_MAX_VEL_Y}" || -n "${DWB_MIN_VEL_Y}" || -n "${DWB_VY_SAMPLES}" ]]; then
+  apply_dwb_velocity_limits "${DWB_MAX_VEL_X}" "${DWB_MIN_VEL_X}" "${DWB_MAX_VEL_Y}" "${DWB_MIN_VEL_Y}" "${DWB_VY_SAMPLES}" || true
 fi
 
 if [[ "${LOCALIZATION}" == "icp" || "${LOCALIZATION}" == "small_gicp" ]]; then
@@ -902,6 +1273,9 @@ fi
 
 if ! start_dynamic_obstacle; then
   exit 14
+fi
+if ! start_gt_trace_recording; then
+  exit 16
 fi
 if ! start_bag_recording; then
   exit 15

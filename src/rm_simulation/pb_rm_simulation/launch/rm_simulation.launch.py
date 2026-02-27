@@ -68,12 +68,14 @@ def get_world_config(world_type):
             'world_path': 'RMUL2026_world/RMUL2026_world.world'
         },
         WorldType.RMUL_26_WAVE: {
-            # Same spawn as RMUL_26, with an added wave strip near own-side corridor.
-            'x': '-5.375',
-            'y': '3.425',
+            # Dedicated wave-passability spawn: place robot at wave-strip left end.
+            # This isolates "can we traverse 8 consecutive bumps" from long-distance routing.
+            # Keep spawn close to a free-space map cell to avoid planner start-in-lethal.
+            'x': '-1.42',
+            'y': '2.75',
             # Keep same spawn-height contract as RMUL_26.
             'z': '0.08',
-            'yaw': '-0.567331',
+            'yaw': '0.0',
             'world_path': 'RMUL2026_world/RMUL2026_wave.world'
         }
     }
