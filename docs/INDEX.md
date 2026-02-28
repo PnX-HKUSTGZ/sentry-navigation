@@ -7,6 +7,7 @@
 - `docs/WAVE_ROAD_STABILITY_TEST.md`：起伏路段稳定性测试方案与结果
 - `docs/SMALL_GICP_NAV_CLOSURE.md`：small-gicp 闭环收敛记录
 - `docs/WAVE_REALCAR_SINGLE_FILE_SOP.md`：实车起伏路段单文件 SOP
+- `docs/FOLLOW_MARK_PROTOCOL_PLAN.md`：起伏路段 follow_mark 协议与联调方案
 
 ## 测试与日志
 
