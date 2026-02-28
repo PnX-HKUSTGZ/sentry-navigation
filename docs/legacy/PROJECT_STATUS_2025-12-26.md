@@ -16,7 +16,7 @@
 
 ### 2.1 评估链路（Evaluation）
 
-- 能按仓库入口脚本运行评估：`run_evaluation.sh`（支持 `--single-test`）
+- 能按仓库入口脚本运行评估：`tools/legacy/run_evaluation.sh`（支持 `--single-test`）
 - Single-test 与 suite 产物齐全（包含 JSON 数据与 HTML 报告），用于后续对比与归档
 - ATE/RPE 不再出现“恒为 0”的假象：
   - 根因已定位为 bag 中缺少 GT/odom 轨迹（或未能提取）
@@ -83,7 +83,7 @@
 
 ### 4.3 文档一致性与落地检查
 
-- 目前存在一个未跟踪文件 `NAV2_PARAMS_GOVERNANCE.md`（工作区里有，但未纳入版本控制）。
+- 目前存在一个未跟踪文件 `docs/legacy/NAV2_PARAMS_GOVERNANCE.md`（工作区里有，但未纳入版本控制）。
   - 需要决定：删除/合并到 README/或正式提交为设计文档。
 
 ## 5. 待办任务（Next TODOs）
@@ -119,7 +119,7 @@
 
 ### 5.4 建议：处理未跟踪文档
 
-- 明确 `NAV2_PARAMS_GOVERNANCE.md` 的归宿：
+- 明确 `docs/legacy/NAV2_PARAMS_GOVERNANCE.md` 的归宿：
   - A) 合并进 README 并删除该文件
   - B) 作为设计文档提交（建议改名为 `docs/` 下带日期/版本）
   - C) 删除（若 README 已覆盖且不希望维护第二份）

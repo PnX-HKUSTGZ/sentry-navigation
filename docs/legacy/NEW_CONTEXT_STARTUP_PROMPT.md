@@ -1,7 +1,7 @@
 # 🚀 哨兵导航系统 Evaluation 测试任务
 
 在开始任何修改/调参之前：
-- 先阅读 `SYSTEM_FILE_ROLES.md`
+- 先阅读 `docs/legacy/SYSTEM_FILE_ROLES.md`
 - 并严格遵循其中的“文件职责与工作规则”（尤其是 TF 与 Nav2 参数的单一真相）
 
 **任务类型**: 系统启动 + 导航评估测试  
@@ -27,7 +27,7 @@
 cd ~/sentry/sentry-navigation
 source install/setup.bash
 # 如遇 FastDDS SHM 报错，优先使用 wrapper：
-#   ./launch_with_fastdds_fix.sh nav_rviz:=false
+#   ./tools/legacy/launch_with_fastdds_fix.sh nav_rviz:=false
 ros2 launch rm_nav_bringup bringup.launch.py nav_rviz:=false &
 ```
 

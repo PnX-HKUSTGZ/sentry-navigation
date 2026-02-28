@@ -57,12 +57,12 @@
 
 ### 5. 启动包装脚本
 
-**文件**: `launch_with_fastdds_fix.sh`
+**文件**: `tools/legacy/launch_with_fastdds_fix.sh`
 
 ```bash
 #!/bin/bash
 # 自动配置FastDDS环境并启动系统
-# 使用方法: ./launch_with_fastdds_fix.sh nav_rviz:=false
+# 使用方法: ./tools/legacy/launch_with_fastdds_fix.sh nav_rviz:=false
 ```
 
 **功能**:
@@ -90,7 +90,7 @@
 ### 方法一：使用wrapper script（推荐）
 ```bash
 cd /home/nyz/sentry/sentry-navigation
-./launch_with_fastdds_fix.sh nav_rviz:=false
+./tools/legacy/launch_with_fastdds_fix.sh nav_rviz:=false
 ```
 
 ### 方法二：手动设置环境变量
@@ -124,7 +124,7 @@ source ~/.bashrc
 3. **ICP初始化**
    - 等待点云数据发布
    - 可能需要手动发送initial pose
-   - 参考RVIZ_2D_POSE_ESTIMATE_GUIDE.md
+   - 参考docs/legacy/RVIZ_2D_POSE_ESTIMATE_GUIDE.md
 
 4. **系统级FastDDS配置（可选）**
    - 创建 `/etc/fastdds_profile.xml`
@@ -240,7 +240,7 @@ export SENTRY_EVAL_MAX_SAMPLES=1000        # 最大监控采样数 (默认 1000)
 
 ### 相关文档
 - `src/rm_nav_bringup/evaluation/README.md`: Evaluation 模块使用说明与输出格式
-- `SYSTEM_FILE_ROLES.md`: 系统文件职责与 evaluation 数据流（包含轨迹提取逻辑概览）
+- `docs/legacy/SYSTEM_FILE_ROLES.md`: 系统文件职责与 evaluation 数据流（包含轨迹提取逻辑概览）
 
 
 ---

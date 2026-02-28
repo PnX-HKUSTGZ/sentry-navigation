@@ -10,23 +10,23 @@
 
 ```bash
 cd /home/nyz/sentry/sentry-navigation
-./run_evaluation.sh
+./tools/legacy/run_evaluation.sh
 ```
 
-说明：`run_evaluation.sh` 会构建工作区，然后运行 `python3 src/rm_nav_bringup/scripts/run_benchmark.py`。
+说明：`tools/legacy/run_evaluation.sh` 会构建工作区，然后运行 `python3 src/rm_nav_bringup/scripts/run_benchmark.py`。
 该入口会启动导航系统、按场景 `waypoints` 自动发送 `NavigateToPose` 目标、录制数据并生成报告。
 
 ### 2. 自定义评估
 
 ```bash
 # 指定测试方法和场景
-./run_evaluation.sh --methods fastlio_slam_toolbox pointlio_icp --scenarios basic_navigation high_dynamic
+./tools/legacy/run_evaluation.sh --methods fastlio_slam_toolbox pointlio_icp --scenarios basic_navigation high_dynamic
 
 # 调试模式（运行单个测试）
-./run_evaluation.sh --single-test
+./tools/legacy/run_evaluation.sh --single-test
 
 # 查看帮助
-./run_evaluation.sh --help
+./tools/legacy/run_evaluation.sh --help
 ```
 
 ### 3. 手动运行
@@ -51,7 +51,7 @@ python3 src/rm_nav_bringup/scripts/compare_methods.py \
 1) 先跑单测（只跑一个方法+一个场景）：
 
 ```bash
-./run_evaluation.sh --single-test
+./tools/legacy/run_evaluation.sh --single-test
 ```
 
 2) 如果提示 Action Server 不可用，先在另一终端检查：
@@ -210,7 +210,7 @@ pip install evo --upgrade --no-binary evo
 
 ### 运行单个测试
 ```bash
-./run_evaluation.sh --single-test
+./tools/legacy/run_evaluation.sh --single-test
 ```
 
 ### 查看详细日志
@@ -252,7 +252,7 @@ ros2 topic echo /gazebo/model_states --once
 
 - **`run_benchmark.py`**: 命令行执行脚本
 - **`compare_methods.py`**: 结果分析和对比脚本
-- **`run_evaluation.sh`**: 一键启动脚本
+- **`tools/legacy/run_evaluation.sh`**: 一键启动脚本
 
 ## 🤝 贡献
 

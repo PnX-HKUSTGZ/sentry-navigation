@@ -186,7 +186,7 @@ ros2 topic echo -n 1 /map
 
 ### 5.1 保存 Nav2 栅格地图（推荐必做）
 
-你们提供了脚本：`save_grid_map.sh`，实际命令为：
+你们提供了脚本：`tools/legacy/save_grid_map.sh`，实际命令为：
 
 ```bash
 ros2 run nav2_map_server map_saver_cli -f src/rm_nav_bringup/map/YOUR_MAP_NAME
@@ -197,7 +197,7 @@ ros2 run nav2_map_server map_saver_cli -f src/rm_nav_bringup/map/YOUR_MAP_NAME
 ```bash
 cd ~/sentry/sentry-navigation
 # 直接运行脚本会提示你替换地图名（脚本本身就是一行命令）
-./save_grid_map.sh
+./tools/legacy/save_grid_map.sh
 ```
 
 产物位置：
@@ -206,7 +206,7 @@ cd ~/sentry/sentry-navigation
 
 ### 5.2 （可选）保存 FastLIO 点云地图（给 ICP/Small-GICP 用）
 
-你们提供了脚本：`save_pcd.sh`，会调用 FastLIO 的服务：
+你们提供了脚本：`tools/legacy/save_pcd.sh`，会调用 FastLIO 的服务：
 
 ```bash
 ros2 service call /map_save std_srvs/srv/Trigger
@@ -299,7 +299,7 @@ ros2 run livox_ros_driver2 livox_ros_driver2_node \
 
 ```bash
 cd ~/sentry/sentry-navigation
-./launch_with_fastdds_fix.sh nav_rviz:=false
+./tools/legacy/launch_with_fastdds_fix.sh nav_rviz:=false
 ```
 
 ---

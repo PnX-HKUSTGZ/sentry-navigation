@@ -78,7 +78,7 @@
 
 ## 6. 可观测性/评测（改进方向）
 
-文档与评测入口集中在仓库根目录的 Evaluation/Diagnosis 报告与脚本（例如 `run_evaluation.sh` 等）。
+文档与评测入口集中在仓库根目录的 Evaluation/Diagnosis 报告与脚本（例如 `tools/legacy/run_evaluation.sh` 等）。
 规则：
 - 新增调试手段优先做成脚本/文档，不要在核心节点里长期留 printf。
 - 每次定位 TF/导航异常，最小证据集应包括：tf tree、关键 topic hz、Nav2 lifecycle 状态、关键参数快照。

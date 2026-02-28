@@ -9,11 +9,14 @@
 
 ## 文档导航
 
+- 文档总索引：`docs/INDEX.md`
 - RMUL_26 联调最小可复现：`docs/RMUL26_JOINT_REPRO.md`
 - 固定发布说明（跨仓库版本钉住）：`docs/RMUL26_REPRO_RELEASE.md`
 - 波浪路段稳定性测试：`docs/WAVE_ROAD_STABILITY_TEST.md`
 - Fast-LIO2 + DWB + small-gicp 收敛报告：`docs/SMALL_GICP_NAV_CLOSURE.md`
 - 自动评估模块说明：`src/rm_nav_bringup/evaluation/README.md`
+- 历史文档归档：`docs/legacy/`
+- 历史兼容脚本归档：`tools/legacy/`
 
 ## 1. 当前默认配置（以代码为准）
 
@@ -175,7 +178,7 @@ bash tools/stress_dynamic_nav.sh
 ### 5.3 自动评估
 
 ```bash
-./run_evaluation.sh --single-test
+./tools/legacy/run_evaluation.sh --single-test
 ```
 
 ### 5.4 波浪路段“轨迹契约”一键回归（推荐）
