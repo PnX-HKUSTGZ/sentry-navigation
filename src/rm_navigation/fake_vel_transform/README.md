@@ -21,6 +21,7 @@ nav2 发布的速度也是基于 `base_link_fake` 坐标系的，通过 tf2 将�
 发布：
 
 - 转换到 base_link 坐标系的速度 `/cmd_vel_chassis`
+- Follow Mark 控制位 `/chassis/follow_mark`（可选）
 
 静态参数：
 
@@ -34,5 +35,39 @@ nav2 发布的速度也是基于 `base_link_fake` 坐标系的，通过 tf2 将�
   - `cmd_vel_topic`
   - `cmd_vel_out_topic`
   - `local_plan_topic`
+- Follow Mark 参数（可选）：
+  - `follow_mark_enable`
+  - `follow_mark_topic`
+  - `follow_mark_manual_topic`
+  - `follow_mark_hint_topic`
+  - `follow_mark_mode`（`off|zone|hint|zone_and_hint`）
+  - `follow_mark_default_value`（`1=常规`，`0=非常规`）
+  - `follow_mark_zone_value`
+  - `follow_mark_input_stale_timeout_sec`
+  - `follow_mark_enter_margin_m` / `follow_mark_exit_margin_m`
+  - `follow_mark_zone_rects`（每4个值表示一个矩形区域，兼容旧配置）
+  - `follow_mark_zone_polygon_points` + `follow_mark_zone_polygon_sizes`（多边形区域）
+
+多边形区域检测的算力控制：
+
+- 节点启动时预计算每个多边形的 AABB 包围盒。
+- 运行时先做 AABB 快速过滤，再做点在多边形内检测（射线法）。
+- `enter/exit margin` 仅在候选多边形上做“点到边距离平方”判断，避免开方运算。
 
   搭配电控固定小陀螺速度，将 spin_speed 设为负，可实现移动时小陀螺减慢。
+
+## 快速配置流程（Follow Mark 区域）
+
+1. 在 `src/rm_nav_bringup/config/launch_params.yaml` 打开 `follow_mark.enable`，并设置 `follow_mark.mode=zone` 或 `zone_and_hint`。
+2. 使用 `tools/annotate_follow_mark_zones.py` 在地图上交互式标注 `zone_polygons`。
+3. 将结果写回 `launch_params.yaml` 后，重启 `bringup.launch.py` 生效。
+
+示例：
+
+```bash
+cd /data/home/sim6g/sentry/sentry-navigation
+python3 tools/annotate_follow_mark_zones.py \
+  --map-yaml src/rm_nav_bringup/map/RMUL26.yaml \
+  --launch-params src/rm_nav_bringup/config/launch_params.yaml \
+  --write-launch-params src/rm_nav_bringup/config/launch_params.yaml
+```
