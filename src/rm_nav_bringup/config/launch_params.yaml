@@ -1,20 +1,82 @@
+# ----------------------------- 运行模式总开关 -----------------------------
+# use_sim:
+#   true  -> 仿真模式（Gazebo）
+#   false -> 实车模式（驱动真实传感器）
+use_sim: true
+
+# mode:
+#   nav     -> 导航模式（默认会启动定位与 Nav2）
+#   mapping -> 建图模式（默认不启动 Nav2，除非 enable_nav2=true）
+mode: nav
+
+# enable_nav2:
+#   true  -> 启动 Nav2（规划/控制/BT 导航）
+#   false -> 不启动 Nav2
+# 说明：
+#   1) 该项作为 bringup.launch.py 的默认值
+#   2) 可被命令行参数覆盖：enable_nav2:=true|false
+enable_nav2: true
+
+# nav_rviz:
+#   true  -> 启动 Navigation2 RViz（rm_navigation/rviz/nav2.rviz）
+#   false -> 不启动 RViz（推荐在无图形环境/压测时使用）
+# 说明：
+#   1) 该项作为 bringup.launch.py 的默认值
+#   2) 可被命令行参数覆盖：nav_rviz:=true|false
+nav_rviz: true
+
+# ----------------------------- 赛场/资源选择 -----------------------------
+# world:
+#   仿真 world 名称（use_sim=true 时生效）
+world: RMUL_26
+
+# ----------------------------- 算法主链路选择 ----------------------------
+# lio:
+#   fastlio | pointlio
+lio: fastlio
+
+# localization:
+#   amcl | slam_toolbox | icp | small_gicp
+localization: slam_toolbox
+
+# controller:
+#   dwb | teb
+controller: dwb
+
+# use_stvl:
+#   全局代价地图是否启用 STVL（true/false）
+use_stvl: true
+
+# obstacle_profile:
+#   default | anti_self | anti_self_strict | anti_self_lift_test
+#   | anti_self_dualspot | anti_self_lowload | anti_self_wiring
+obstacle_profile: default
+
+# lidar_noise_stddev:
+#   Gazebo 激光噪声标准差（仿真参数）
+lidar_noise_stddev: 0.002
+
+# use_lio_rviz:
+#   true  -> 启动 LIO 可视化 RViz
+#   false -> 不启动 LIO 可视化 RViz
+use_lio_rviz: false
+
+# ----------------------------- 雷达外参与双雷达 --------------------------
 base_link2livox_frame:
   rpy: '"0.0  0.0  0.0"'
   xyz: '"0.12 0.0 0.175"'
+
 base_link2livox_right_frame:
   rpy: '"0.0 0.0 -0.610865"'
   xyz: '"0.12 -0.14 0.175"'
+
 dual_lidar:
+  # enable:
+  #   true  -> 启用右侧雷达链路
+  #   false -> 仅主雷达
   enable: false
   nav2_consume_right: true
+  # obstacle_fusion_mode:
+  #   separate -> 左右雷达障碍分别进入 Nav2
+  #   merged   -> 融合后作为单一障碍源
   obstacle_fusion_mode: separate
-controller: dwb
-lio: fastlio
-localization: slam_toolbox
-mode: nav
-use_lio_rviz: false
-use_sim: true
-use_stvl: true
-obstacle_profile: default
-lidar_noise_stddev: 0.002
-world: RMUL_26

@@ -17,6 +17,7 @@
 """
 import os
 import sys
+import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import TimerAction, DeclareLaunchArgument, OpaqueFunction
@@ -34,6 +35,41 @@ def _parse_bool_str(value: str, *, key: str) -> bool:
     raise ValueError(
         f"Invalid boolean launch arg {key}: {value!r}. "
         "Allowed: 1/0/true/false/yes/no/on/off"
+    )
+
+
+def _bool_to_launch_str(value: bool) -> str:
+    return 'true' if value else 'false'
+
+
+def _load_launch_params_yaml():
+    config_path = os.path.join(
+        get_package_share_directory('rm_nav_bringup'),
+        'config',
+        'launch_params.yaml',
+    )
+    try:
+        with open(config_path, 'r', encoding='utf-8') as f:
+            data = yaml.safe_load(f) or {}
+    except FileNotFoundError:
+        raise FileNotFoundError(f"Missing launch params file: {config_path}")
+    except yaml.YAMLError as exc:
+        raise yaml.YAMLError(f"Invalid YAML in {config_path}: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ValueError(f"launch_params.yaml must be a mapping, got: {type(data)}")
+    return data
+
+
+def _bool_from_launch_params(params: dict, key: str, default: bool) -> bool:
+    raw = params.get(key, default)
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        return _parse_bool_str(raw, key=f'launch_params.{key}')
+    if raw is None:
+        return default
+    raise ValueError(
+        f"launch_params.{key} must be bool or bool-like string, got: {raw!r}"
     )
 
 
@@ -243,6 +279,15 @@ def _launch_setup(context, *args, **kwargs):
 
 
 def generate_launch_description():
+    launch_params = _load_launch_params_yaml()
+    mode_default = str(launch_params.get('mode', 'nav')).strip().lower()
+    enable_nav2_default = _bool_from_launch_params(
+        launch_params, 'enable_nav2', mode_default == 'nav'
+    )
+    nav_rviz_default = _bool_from_launch_params(
+        launch_params, 'nav_rviz', True
+    )
+
     ld = LaunchDescription()
 
     ld.add_action(
@@ -323,8 +368,11 @@ def generate_launch_description():
     ld.add_action(
         DeclareLaunchArgument(
             'nav_rviz',
-            default_value='true',
-            description='Whether to launch Navigation2 RViz (rm_navigation/rviz_launch.py)'
+            default_value=_bool_to_launch_str(nav_rviz_default),
+            description=(
+                'Whether to launch Navigation2 RViz (rm_navigation/rviz_launch.py). '
+                'Default comes from config/launch_params.yaml nav_rviz.'
+            )
         )
     )
 
@@ -342,10 +390,11 @@ def generate_launch_description():
     ld.add_action(
         DeclareLaunchArgument(
             'enable_nav2',
-            default_value='',
+            default_value=_bool_to_launch_str(enable_nav2_default),
             description=(
                 'Enable/disable Navigation2 startup (true|false). '
-                'Empty uses mode-based policy: nav=true, mapping=false.'
+                'Default comes from config/launch_params.yaml enable_nav2 '
+                '(fallback: mode==nav).'
             )
         )
     )
