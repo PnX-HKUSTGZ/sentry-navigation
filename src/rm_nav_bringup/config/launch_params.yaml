@@ -56,6 +56,45 @@ obstacle_profile: default
 #   Gazebo 激光噪声标准差（仿真参数）
 lidar_noise_stddev: 0.002
 
+# ----------------------------- Follow Mark 联调配置 -----------------------
+# follow_mark:
+#   enable:
+#     true  -> 发布 /chassis/follow_mark
+#     false -> 关闭 Follow Mark 发布链路
+#   mode:
+#     off | zone | hint | zone_and_hint
+#   default_value:
+#     1 -> 常规模式（默认）
+#     0 -> 非常规模式（轮向不跟随标志位）
+#   zone_rects:
+#     矩形区域数组（每4个值一个矩形: [xmin, xmax, ymin, ymax]）
+#     支持扁平写法或嵌套写法，例如：
+#       [-1.5, 1.5, -1.5, 1.5]
+#       [[-1.5, 1.5, -1.5, 1.5], [2.0, 3.0, -1.0, 1.0]]
+#   zone_polygons:
+#     多边形区域数组（推荐），每个多边形至少3个顶点。
+#     支持两种写法：
+#       1) 顶点写法: [[x1, y1], [x2, y2], [x3, y3], ...]
+#       2) 扁平写法: [x1, y1, x2, y2, x3, y3, ...]
+#     示例：
+#       [
+#         [[-1.5, -1.5], [1.5, -1.5], [1.5, 1.5], [-1.5, 1.5]],
+#         [[2.0, -1.0], [3.0, -1.0], [3.2, 0.8], [2.1, 1.0]]
+#       ]
+follow_mark:
+  enable: true
+  mode: zone_and_hint
+  topic: /chassis/follow_mark
+  manual_topic: /chassis/follow_mark_manual
+  hint_topic: /chassis/follow_mark_hint
+  input_stale_timeout_sec: 0.3
+  default_value: 1
+  zone_value: 1
+  enter_margin_m: 0.35
+  exit_margin_m: 0.55
+  zone_rects: []
+  zone_polygons: []
+
 # use_lio_rviz:
 #   true  -> 启动 LIO 可视化 RViz
 #   false -> 不启动 LIO 可视化 RViz
