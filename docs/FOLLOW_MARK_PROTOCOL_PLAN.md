@@ -15,7 +15,7 @@
 
 1. 不破坏现有速度链路（`/cmd_vel_chassis` 保持不变）
 2. 在串口包里新增 `uint8_t follow_mark`
-3. 支持“自动判定 + 人工覆盖 + 决策提示”三种输入
+3. 支持“区域判定 + 人工覆盖 + 决策提示”三种输入
 4. 支持协议向后兼容（旧固件可继续跑）
 
 ---
@@ -32,8 +32,8 @@ uint8_t follow_mark;
 
 建议语义：
 
-- `0`: 常规模式（不强制轮向一致）
-- `1`: Follow 模式（强制轮向一致）
+- `0`: 非常规模式（轮向不跟随标志位）
+- `1`: 常规模式（默认）
 - `2~255`: 预留
 
 ## 2.2 兼容策略
@@ -50,18 +50,18 @@ uint8_t follow_mark;
 在 `navCallback` 中：
 
 1. 读取缓存 `mark`
-2. 若超时（例如 `0.3s`）或未收到，回退 `0`
+2. 若超时（例如 `0.3s`）或未收到，回退 `1`
 3. 组包时写入 `packet.follow_mark`
 
 伪代码：
 
 ```cpp
-uint8_t mark = 0;
+uint8_t mark = 1;
 {
   std::lock_guard<std::mutex> lock(mark_mutex_);
   const bool fresh = has_follow_mark_ &&
     ((now - last_follow_mark_stamp_).seconds() <= mark_stale_timeout_sec_);
-  mark = fresh ? follow_mark_ : 0;
+  mark = fresh ? follow_mark_ : 1;
 }
 packet.follow_mark = mark;
 ```
@@ -104,31 +104,29 @@ packet.follow_mark = mark;
 
 ## 4. 场上判定策略（导航侧）
 
-采用“多源融合 + 优先级 + 滞回”：
+采用“从简优先级”策略（不做 IMU 判定）：
 
 优先级：
 
 1. `manual_override`
 2. `bt_hint`
 3. `zone_detect`
-4. `imu_detect`
-5. default=0
+4. default=1
 
 触发建议（初始值）：
 
-- 进入起伏区（带 `enter_margin=0.35m`）
-- 或 `abs(pitch)>5.0deg` / `abs(roll)>4.0deg`
+- 常规默认 `follow_mark=1`
+- 若配置 `zone_detect`，可在起伏区内强制保持 `1`（带 `enter_margin=0.35m`）
 
 释放建议（初始值）：
 
-- 离开起伏区超过 `exit_margin=0.55m`
-- 且 `abs(pitch)<2.5deg` 且 `abs(roll)<2.0deg`
-- 且保持 `hold_after_exit=1.2s`
+- 离开起伏区超过 `exit_margin=0.55m` 后，回到默认值 `1`
 
 说明：
 
 - 滞回用于避免 `follow_mark` 抖动，防止下位机模式频繁切换。
-- 起伏区建议参数化为 YAML 区域，不在代码中硬编码。
+- 起伏区建议参数化为 YAML 区域（支持多边形），不在代码中硬编码。
+- 计算优化建议：先做多边形 AABB 快速过滤，再做点内检测。
 
 ---
 
@@ -146,13 +144,65 @@ packet.follow_mark = mark;
 
 - `follow_mark_enable`
 - `follow_mark_topic`（默认 `/chassis/follow_mark`）
-- `follow_mark_mode`（`off|zone|imu|hybrid`）
+- `follow_mark_mode`（`off|zone|hint|zone_and_hint`）
 - `mark_stale_timeout_sec`
 - `wave_zones`
 - `enter_margin_m` / `exit_margin_m`
-- `pitch_on_deg` / `pitch_off_deg`
-- `roll_on_deg` / `roll_off_deg`
-- `hold_after_exit_sec`
+- `zone_polygons`（推荐；每个多边形至少3个点）
+
+## 5.1 地图区域标注工具（已有地图 / 临时建图都可用）
+
+新增工具：
+
+- `tools/annotate_follow_mark_zones.py`
+
+能力：
+
+- 直接读取 `map yaml + pgm` 并在图上点选多边形区域。
+- 支持把多边形写回 `src/rm_nav_bringup/config/launch_params.yaml` 的 `follow_mark.zone_polygons`。
+- 兼容两类输入：
+  - 仓库内已有地图（例如 `src/rm_nav_bringup/map/RMUL26.yaml`）
+  - `map_saver_cli -f /tmp/wave_local_map` 生成的临时地图
+- `--map-yaml` 参数同时接受 `.yaml/.yml` 或 `.pgm` 路径（传 `.pgm` 会自动找同名 `.yaml`）。
+
+交互键位：
+
+- 鼠标左键：添加顶点
+- 鼠标右键 / `Backspace`：撤销一个顶点
+- `Enter`：提交当前多边形
+- `d`：删除最后一个已提交多边形
+- `c`：清空当前未提交多边形
+- `s`：保存（yaml + png）
+- `q`：退出（退出时也会自动保存当前结果）
+
+示例 1：编辑仓库内 RMUL26 地图并回写 launch 参数
+
+```bash
+cd /data/home/sim6g/sentry/sentry-navigation
+python3 tools/annotate_follow_mark_zones.py \
+  --map-yaml src/rm_nav_bringup/map/RMUL26.yaml \
+  --launch-params src/rm_nav_bringup/config/launch_params.yaml \
+  --write-launch-params src/rm_nav_bringup/config/launch_params.yaml
+```
+
+示例 2：编辑临时建图输出（`/tmp/wave_local_map`）
+
+```bash
+cd /data/home/sim6g/sentry/sentry-navigation
+python3 tools/annotate_follow_mark_zones.py \
+  --map-yaml /tmp/wave_local_map.yaml \
+  --launch-params src/rm_nav_bringup/config/launch_params.yaml \
+  --out-yaml /tmp/wave_local_follow_mark.yaml \
+  --out-png /tmp/wave_local_follow_mark.png
+```
+
+示例 3：只有 `.pgm` 路径时（自动推断同名 `.yaml`）
+
+```bash
+cd /data/home/sim6g/sentry/sentry-navigation
+python3 tools/annotate_follow_mark_zones.py \
+  --map-yaml /tmp/wave_local_map.pgm
+```
 
 ---
 
@@ -180,7 +230,7 @@ packet.follow_mark = mark;
 
 建议由导航侧融合：
 
-`manual_override > hint > auto_detect`
+`manual_override > hint > zone_detect > default(1)`
 
 ---
 
@@ -204,14 +254,14 @@ ros2 topic hz /cmd_vel_chassis
 在驱动日志中打印并验证：
 
 - `packet.follow_mark`
-- 与当前路段状态/姿态状态一致
+- 与当前路段状态/策略状态一致
 
 ## 8.3 场景验收
 
-1. 平路巡航：`follow_mark` 基本为 `0`
-2. 进入起伏区：`follow_mark` 稳定切到 `1`
-3. 离开起伏区：按滞回规则回到 `0`
-4. 连续 8 起伏通过：`follow_mark` 无高频抖动
+1. 常规运行：`follow_mark` 维持 `1`（默认值）
+2. 人工覆盖或特定战术动作：`follow_mark` 可切到 `0`
+3. 特殊动作结束后：`follow_mark` 回到 `1`
+4. 连续 8 起伏通过：`follow_mark` 无高频抖动（默认保持 `1`）
 
 ---
 
