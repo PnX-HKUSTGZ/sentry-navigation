@@ -49,7 +49,7 @@ use_stvl: true
 
 # obstacle_profile:
 #   default | anti_self | anti_self_strict | anti_self_lift_test
-#   | anti_self_dualspot | anti_self_lowload | anti_self_wiring
+#   | anti_self_dualspot | anti_self_lowload | anti_self_wiring | cpu_stress
 obstacle_profile: default
 
 # lidar_noise_stddev:
