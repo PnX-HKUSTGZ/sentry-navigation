@@ -1,0 +1,54 @@
+bt_navigator:
+  ros__parameters:
+    bt_loop_duration: 5
+
+controller_server:
+  ros__parameters:
+    controller_frequency: 40.0
+
+planner_server:
+  ros__parameters:
+    expected_planner_frequency: 20.0
+
+velocity_smoother:
+  ros__parameters:
+    smoothing_frequency: 60.0
+
+recoveries_server:
+  ros__parameters:
+    cycle_frequency: 8.0
+
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      update_frequency: 40.0
+      publish_frequency: 30.0
+      always_send_full_costmap: true
+      obstacle_layer:
+        scan:
+          obstacle_min_range: 0.30
+          obstacle_max_range: 7.0
+          raytrace_max_range: 7.0
+        lidar_right:
+          obstacle_min_range: 0.30
+          obstacle_max_range: 5.5
+          raytrace_max_range: 7.0
+
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      update_frequency: 20.0
+      publish_frequency: 15.0
+      always_send_full_costmap: true
+      # Applied when use_stvl=true and global STVL config is injected.
+      stvl_layer:
+        publish_voxel_map: true
+        voxel_size: 0.03
+        voxel_decay: 1.20
+        transform_tolerance: 0.10
+        scan_mark:
+          obstacle_range: 5.0
+          observation_persistence: 0.25
+        livox_right_mark:
+          obstacle_range: 5.0
+          observation_persistence: 0.25
