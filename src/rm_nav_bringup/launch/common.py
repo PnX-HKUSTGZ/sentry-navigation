@@ -932,38 +932,46 @@ start_map_server = IncludeLaunchDescription(
 )
 
 # 虚拟速度变换节点 - 为非全向移动底盘提供速度变换
+fake_vel_transform_params = {
+    'use_sim_time': use_sim_time_param,
+    'spin_speed': 0.0,  # 0.0=透传/cmd_vel角速度；非0=固定旋转速度(rad/s)
+    # In simulation, Nav2 cmd_vel is already in base frame; disable plan-based rotation.
+    # Real robot keeps this enabled for chassis decoupling.
+    'use_local_plan_transform': (not use_sim),
+    'tf_publish_frequency': 20,
+    'local_plan_timeout_sec': 0.5,
+    'odom_frame': 'odom',
+    'base_frame': 'base_link',
+    'fake_base_frame': 'base_link_fake',
+    'cmd_vel_topic': '/cmd_vel',
+    'cmd_vel_out_topic': '/cmd_vel_chassis',
+    'local_plan_topic': '/local_plan',
+    'follow_mark_enable': follow_mark_enable,
+    'follow_mark_topic': follow_mark_topic,
+    'follow_mark_manual_topic': follow_mark_manual_topic,
+    'follow_mark_hint_topic': follow_mark_hint_topic,
+    'follow_mark_mode': follow_mark_mode,
+    'follow_mark_input_stale_timeout_sec': follow_mark_input_stale_timeout_sec,
+    'follow_mark_enter_margin_m': follow_mark_enter_margin_m,
+    'follow_mark_exit_margin_m': follow_mark_exit_margin_m,
+    'follow_mark_default_value': follow_mark_default_value,
+    'follow_mark_zone_value': follow_mark_zone_value,
+}
+
+# launch_ros 对空数组参数会归一化成 ()，并在评估阶段报类型错误。
+# 空区配置使用节点默认值；仅在有数据时下发数组参数。
+if follow_mark_zone_rects:
+    fake_vel_transform_params['follow_mark_zone_rects'] = follow_mark_zone_rects
+if follow_mark_zone_polygon_points:
+    fake_vel_transform_params['follow_mark_zone_polygon_points'] = follow_mark_zone_polygon_points
+if follow_mark_zone_polygon_sizes:
+    fake_vel_transform_params['follow_mark_zone_polygon_sizes'] = follow_mark_zone_polygon_sizes
+
 bringup_fake_vel_transform_node = Node(
     package='fake_vel_transform',
     executable='fake_vel_transform_node',
     output='screen',
-    parameters=[{
-        'use_sim_time': use_sim_time_param,
-        'spin_speed': 0.0,  # 0.0=透传/cmd_vel角速度；非0=固定旋转速度(rad/s)
-        # In simulation, Nav2 cmd_vel is already in base frame; disable plan-based rotation.
-        # Real robot keeps this enabled for chassis decoupling.
-        'use_local_plan_transform': (not use_sim),
-        'tf_publish_frequency': 20,
-        'local_plan_timeout_sec': 0.5,
-        'odom_frame': 'odom',
-        'base_frame': 'base_link',
-        'fake_base_frame': 'base_link_fake',
-        'cmd_vel_topic': '/cmd_vel',
-        'cmd_vel_out_topic': '/cmd_vel_chassis',
-        'local_plan_topic': '/local_plan',
-        'follow_mark_enable': follow_mark_enable,
-        'follow_mark_topic': follow_mark_topic,
-        'follow_mark_manual_topic': follow_mark_manual_topic,
-        'follow_mark_hint_topic': follow_mark_hint_topic,
-        'follow_mark_mode': follow_mark_mode,
-        'follow_mark_input_stale_timeout_sec': follow_mark_input_stale_timeout_sec,
-        'follow_mark_enter_margin_m': follow_mark_enter_margin_m,
-        'follow_mark_exit_margin_m': follow_mark_exit_margin_m,
-        'follow_mark_default_value': follow_mark_default_value,
-        'follow_mark_zone_value': follow_mark_zone_value,
-        'follow_mark_zone_rects': follow_mark_zone_rects,
-        'follow_mark_zone_polygon_points': follow_mark_zone_polygon_points,
-        'follow_mark_zone_polygon_sizes': follow_mark_zone_polygon_sizes,
-    }]
+    parameters=[fake_vel_transform_params]
 )
 
 # SLAM工具箱建图节点 - 在线异步SLAM建图
