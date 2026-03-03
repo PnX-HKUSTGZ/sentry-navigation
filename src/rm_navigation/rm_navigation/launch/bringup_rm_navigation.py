@@ -29,6 +29,7 @@ def generate_launch_description():
     use_respawn = LaunchConfiguration('use_respawn')
     log_level = LaunchConfiguration('log_level')
     use_nav_rviz = LaunchConfiguration('nav_rviz')
+    rviz_config = LaunchConfiguration('rviz_config')
 
     remappings = [('/tf', 'tf'),
                   ('/tf_static', 'tf_static')]
@@ -99,6 +100,11 @@ def generate_launch_description():
         default_value='True',
         description='Visualize navigation2 if true')
 
+    declare_rviz_config_cmd = DeclareLaunchArgument(
+        'rviz_config',
+        default_value=os.path.join(bringup_dir, 'rviz', 'nav2.rviz'),
+        description='Full path to RViz config file for navigation visualization')
+
     # Specify the actions
     bringup_cmd_group = GroupAction([
         PushRosNamespace(
@@ -127,7 +133,12 @@ def generate_launch_description():
 
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(os.path.join(launch_dir, 'rviz_launch.py')),
-            condition=IfCondition(use_nav_rviz)
+            condition=IfCondition(use_nav_rviz),
+            launch_arguments={
+                'namespace': namespace,
+                'use_namespace': use_namespace,
+                'rviz_config': rviz_config,
+            }.items()
         ),
     ])
 
@@ -149,6 +160,7 @@ def generate_launch_description():
     ld.add_action(declare_use_respawn_cmd)
     ld.add_action(declare_log_level_cmd)
     ld.add_action(declare_nav_rviz_cmd)
+    ld.add_action(declare_rviz_config_cmd)
 
     # Add the actions to launch all of the navigation nodes
     ld.add_action(bringup_cmd_group)

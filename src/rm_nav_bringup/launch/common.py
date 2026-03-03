@@ -76,6 +76,34 @@ def _resolve_resource_with_compact_fallback(resource_dir: str, resource_name: st
     return resource_name, preferred_path
 
 
+def _resolve_nav_rviz_config_path(raw_value: str) -> str:
+    """Resolve RViz config path from absolute path or package-relative name."""
+    config_name = (raw_value or "").strip()
+    if not config_name:
+        config_name = "nav2.rviz"
+
+    expanded = os.path.expanduser(config_name)
+    if os.path.isabs(expanded):
+        return expanded
+
+    rm_navigation_share = get_package_share_directory("rm_navigation")
+    candidates = [
+        os.path.join(rm_navigation_share, expanded),
+        os.path.join(rm_navigation_share, "rviz", expanded),
+        os.path.join(rm_nav_bringup_dir, expanded),
+        os.path.join(rm_nav_bringup_dir, "rviz", expanded),
+    ]
+    for candidate in candidates:
+        if os.path.exists(candidate):
+            return candidate
+
+    fallback = os.path.join(rm_navigation_share, "rviz", "nav2.rviz")
+    print(
+        f"[警告] 未找到 nav_rviz_config='{config_name}'，回退使用默认: {fallback}"
+    )
+    return fallback
+
+
 # 兼容：有些 world 名称含下划线（如 RMUL_26），但 map 资源文件可能不含下划线（如 RMUL26.yaml）。
 # 仅当未显式指定 map override 时启用回退，避免掩盖用户输入错误。
 map_dir = os.path.join(rm_nav_bringup_dir, "map")
@@ -128,6 +156,13 @@ use_sim_time = LaunchConfiguration(
 use_sim_time_param = ParameterValue(use_sim_time, value_type=bool)
 use_lio_rviz = launch_params.get("use_lio_rviz", False)  # 可视化 FAST_LIO 或 Point_LIO 的点云图
 nav_rviz = LaunchConfiguration('nav_rviz', default='true')  # Navigation2 RViz（可由 launch 参数覆盖）
+nav_rviz_config_default = _resolve_nav_rviz_config_path(
+    str(launch_params.get("nav_rviz_config", "nav2.rviz"))
+)
+nav_rviz_config = LaunchConfiguration(
+    'nav_rviz_config',
+    default=nav_rviz_config_default
+)
 dual_lidar_cfg = launch_params.get("dual_lidar", {})
 dual_lidar_enable = bool(dual_lidar_cfg.get("enable", False))
 dual_lidar_nav2_consume_right = bool(dual_lidar_cfg.get("nav2_consume_right", True))
@@ -174,6 +209,7 @@ print(f"  局部控制器: {controller}")
 print(f"  仿真模式: {use_sim}")
 print(f"  激光噪声标准差: {lidar_noise_stddev}")
 print(f"  LIO可视化: {use_lio_rviz}")
+print(f"  Nav2 RViz配置: {nav_rviz_config_default}")
 print(f"  双雷达: {dual_lidar_enable}")
 print(f"  Nav2消费右雷达: {dual_lidar_nav2_consume_right}")
 print(f"  双雷达障碍融合模式: {dual_lidar_obstacle_fusion_mode}")
@@ -769,7 +805,9 @@ start_navigation2 = IncludeLaunchDescription(
         'use_sim_time': use_sim_time,
         'map': nav2_map_dir,
         'params_file': nav2_params_file_dir,
-    'nav_rviz': nav_rviz}.items()
+        'nav_rviz': nav_rviz,
+        'rviz_config': nav_rviz_config,
+    }.items()
 )
 
 # 里程计坐标系变换 - 建立odom和lidar_odom之间的等价静态坐标变换

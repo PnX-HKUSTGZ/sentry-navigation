@@ -25,6 +25,13 @@ enable_nav2: true
 #   2) 可被命令行参数覆盖：nav_rviz:=true|false
 nav_rviz: true
 
+# nav_rviz_config:
+#   Navigation2 RViz 配置文件。
+#   1) 支持绝对路径（例如 /tmp/custom_nav.rviz）
+#   2) 支持相对文件名（例如 nav2.rviz），会优先在 rm_navigation/rviz 下解析
+#   3) 可被命令行参数覆盖：nav_rviz_config:=xxx
+nav_rviz_config: nav2.rviz
+
 # ----------------------------- 赛场/资源选择 -----------------------------
 # world:
 #   仿真 world 名称（use_sim=true 时生效）

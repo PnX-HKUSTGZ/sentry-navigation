@@ -287,6 +287,9 @@ def generate_launch_description():
     nav_rviz_default = _bool_from_launch_params(
         launch_params, 'nav_rviz', True
     )
+    nav_rviz_config_default = str(
+        launch_params.get('nav_rviz_config', 'nav2.rviz')
+    ).strip() or 'nav2.rviz'
 
     ld = LaunchDescription()
 
@@ -372,6 +375,19 @@ def generate_launch_description():
             description=(
                 'Whether to launch Navigation2 RViz (rm_navigation/rviz_launch.py). '
                 'Default comes from config/launch_params.yaml nav_rviz.'
+            )
+        )
+    )
+
+    # 允许在命令行覆盖：ros2 launch rm_nav_bringup bringup.launch.py nav_rviz_config:=nav2_debug.rviz
+    ld.add_action(
+        DeclareLaunchArgument(
+            'nav_rviz_config',
+            default_value=nav_rviz_config_default,
+            description=(
+                'Navigation2 RViz config override. '
+                'Supports absolute path or package-relative file name. '
+                'Default comes from config/launch_params.yaml nav_rviz_config.'
             )
         )
     )
