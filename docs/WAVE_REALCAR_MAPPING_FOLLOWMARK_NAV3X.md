@@ -1,7 +1,6 @@
 # 实车流程：建图 -> 标注起伏区 -> Follow Mark 自动发布 -> 导航往返
 
-适用仓库：`/home/pnx/nav_ws/sentry-navigation`  
-串口联动仓库：`/home/pnx/pnx_autoaim/src/rm_serial_driver`
+适用仓库：`/home/pnx/nav_ws/sentry-navigation`
 
 目标：在实车中完成以下闭环：
 
@@ -39,14 +38,21 @@
 
 ## 2. 建图模式启动（mapping）
 
+先在 `src/rm_nav_bringup/config/launch_params.yaml` 确认：
+
+```yaml
+use_sim: false
+mode: mapping
+```
+
+注意：`mode/use_sim` 当前不是 `bringup.launch.py` 的命令行参数，应通过 `launch_params.yaml` 配置。
+
 ```bash
 cd /home/pnx/nav_ws/sentry-navigation
 source /opt/ros/humble/setup.bash
 source install/setup.bash
 
 ros2 launch rm_nav_bringup bringup.launch.py \
-  mode:=mapping \
-  use_sim:=false \
   localization:=slam_toolbox \
   enable_nav2:=true \
   nav_rviz:=true \
@@ -137,10 +143,16 @@ follow_mark:
 
 ## 5. 导航模式启动（nav）
 
+导航前在 `src/rm_nav_bringup/config/launch_params.yaml` 切换：
+
+```yaml
+use_sim: false
+mode: nav
+```
+
 ```bash
 ros2 launch rm_nav_bringup bringup.launch.py \
-  mode:=nav \
-  use_sim:=false \
+  map:=${MAP_NAME} \
   localization:=amcl \
   enable_nav2:=true \
   nav_rviz:=true \
@@ -201,4 +213,5 @@ ros2 action info /navigate_to_pose
 1. `follow_mark` 一直是 `1`：检查 `zone_polygons` 是否在当前 odom/map 坐标系下，检查点位是否画偏。
 2. `follow_mark` 抖动：增大 `exit_margin_m`，保证 `exit_margin_m >= enter_margin_m`。
 3. 串口无响应：确认串口侧 `nav_packet_version=2`，且电控固件已按 `header 后紧跟 follow_mark` 解析。
-4. RViz 不显示：检查 `nav_rviz:=true`、`nav_rviz_config` 路径与 `DISPLAY`。
+4. RViz 不显示：检查 `nav_rviz:=true`、`nav_rviz_config:=nav2.rviz`（或绝对路径）与 `DISPLAY`。
+5. 启动参数不生效：确认 `mode/use_sim` 是在 `src/rm_nav_bringup/config/launch_params.yaml` 修改，而不是通过命令行传参。
