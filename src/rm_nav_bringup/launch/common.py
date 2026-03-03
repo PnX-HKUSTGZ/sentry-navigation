@@ -174,6 +174,161 @@ if dual_lidar_obstacle_fusion_mode not in {"separate", "merged"}:
         "dual_lidar.obstacle_fusion_mode 仅支持 'separate' 或 'merged'"
     )
 
+follow_mark_cfg = launch_params.get("follow_mark", {})
+if not isinstance(follow_mark_cfg, dict):
+    raise ValueError("launch_params.follow_mark 必须是字典")
+
+follow_mark_enable_raw = follow_mark_cfg.get("enable", False)
+if isinstance(follow_mark_enable_raw, bool):
+    follow_mark_enable = follow_mark_enable_raw
+elif isinstance(follow_mark_enable_raw, (int, float)) and follow_mark_enable_raw in (0, 1):
+    follow_mark_enable = bool(follow_mark_enable_raw)
+elif isinstance(follow_mark_enable_raw, str):
+    follow_mark_enable = _parse_bool_str(
+        follow_mark_enable_raw, key="launch_params.follow_mark.enable"
+    )
+else:
+    raise ValueError(
+        "launch_params.follow_mark.enable 必须是 bool 或布尔字符串"
+    )
+
+follow_mark_mode = str(follow_mark_cfg.get("mode", "off")).strip().lower()
+valid_follow_mark_modes = {"off", "zone", "hint", "zone_and_hint"}
+if follow_mark_mode not in valid_follow_mark_modes:
+    raise ValueError(
+        f"无效的 follow_mark.mode: {follow_mark_mode}. 有效值: {sorted(valid_follow_mark_modes)}"
+    )
+
+follow_mark_topic = str(
+    follow_mark_cfg.get("topic", "/chassis/follow_mark")
+).strip()
+follow_mark_manual_topic = str(
+    follow_mark_cfg.get("manual_topic", "/chassis/follow_mark_manual")
+).strip()
+follow_mark_hint_topic = str(
+    follow_mark_cfg.get("hint_topic", "/chassis/follow_mark_hint")
+).strip()
+if not follow_mark_topic:
+    raise ValueError("follow_mark.topic 不能为空")
+if not follow_mark_manual_topic:
+    raise ValueError("follow_mark.manual_topic 不能为空")
+if not follow_mark_hint_topic:
+    raise ValueError("follow_mark.hint_topic 不能为空")
+
+def _parse_follow_mark_float(key: str, default: float) -> float:
+    raw = follow_mark_cfg.get(key, default)
+    try:
+        return float(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"launch_params.follow_mark.{key} 必须是数字，当前: {raw!r}") from exc
+
+
+def _parse_follow_mark_mark(key: str, default: int) -> int:
+    raw = follow_mark_cfg.get(key, default)
+    try:
+        value = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"launch_params.follow_mark.{key} 必须是整数，当前: {raw!r}") from exc
+    if value not in {0, 1}:
+        raise ValueError(f"launch_params.follow_mark.{key} 仅允许 0 或 1，当前: {value}")
+    return value
+
+
+follow_mark_input_stale_timeout_sec = _parse_follow_mark_float(
+    "input_stale_timeout_sec", 0.3
+)
+follow_mark_enter_margin_m = _parse_follow_mark_float("enter_margin_m", 0.35)
+follow_mark_exit_margin_m = _parse_follow_mark_float("exit_margin_m", 0.55)
+if follow_mark_input_stale_timeout_sec < 0.0:
+    raise ValueError("launch_params.follow_mark.input_stale_timeout_sec 必须 >= 0.0")
+if follow_mark_enter_margin_m < 0.0:
+    raise ValueError("launch_params.follow_mark.enter_margin_m 必须 >= 0.0")
+if follow_mark_exit_margin_m < 0.0:
+    raise ValueError("launch_params.follow_mark.exit_margin_m 必须 >= 0.0")
+
+follow_mark_default_value = _parse_follow_mark_mark("default_value", 1)
+follow_mark_zone_value = _parse_follow_mark_mark("zone_value", 0)
+
+follow_mark_zone_rects_raw = follow_mark_cfg.get("zone_rects", [])
+follow_mark_zone_rects = []
+if follow_mark_zone_rects_raw is None:
+    follow_mark_zone_rects_raw = []
+if not isinstance(follow_mark_zone_rects_raw, list):
+    raise ValueError("launch_params.follow_mark.zone_rects 必须是数组")
+for item in follow_mark_zone_rects_raw:
+    if isinstance(item, (list, tuple)):
+        if len(item) != 4:
+            raise ValueError(
+                "launch_params.follow_mark.zone_rects 的嵌套元素必须是长度为4的数组: "
+                "[xmin, xmax, ymin, ymax]"
+            )
+        try:
+            follow_mark_zone_rects.extend([float(item[0]), float(item[1]), float(item[2]), float(item[3])])
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"launch_params.follow_mark.zone_rects 含有非数字项: {item!r}"
+            ) from exc
+    else:
+        try:
+            follow_mark_zone_rects.append(float(item))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"launch_params.follow_mark.zone_rects 含有非数字项: {item!r}"
+            ) from exc
+if len(follow_mark_zone_rects) % 4 != 0:
+    raise ValueError(
+        "launch_params.follow_mark.zone_rects 长度必须为4的倍数（每4个值代表一个矩形）"
+    )
+
+follow_mark_zone_polygons_raw = follow_mark_cfg.get("zone_polygons", [])
+if follow_mark_zone_polygons_raw is None:
+    follow_mark_zone_polygons_raw = []
+if not isinstance(follow_mark_zone_polygons_raw, list):
+    raise ValueError("launch_params.follow_mark.zone_polygons 必须是数组")
+
+follow_mark_zone_polygon_points = []
+follow_mark_zone_polygon_sizes = []
+for polygon in follow_mark_zone_polygons_raw:
+    if not isinstance(polygon, (list, tuple)):
+        raise ValueError(
+            f"follow_mark.zone_polygons 的元素必须是数组，当前: {polygon!r}"
+        )
+    if len(polygon) == 0:
+        continue
+
+    polygon_points = []
+    if isinstance(polygon[0], (list, tuple)):
+        for vertex in polygon:
+            if not isinstance(vertex, (list, tuple)) or len(vertex) != 2:
+                raise ValueError(
+                    "follow_mark.zone_polygons 的顶点必须是 [x, y] 形式"
+                )
+            try:
+                polygon_points.extend([float(vertex[0]), float(vertex[1])])
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"follow_mark.zone_polygons 顶点存在非数字项: {vertex!r}"
+                ) from exc
+    else:
+        if len(polygon) % 2 != 0:
+            raise ValueError(
+                "follow_mark.zone_polygons 扁平写法长度必须为偶数（x/y成对）"
+            )
+        try:
+            polygon_points = [float(v) for v in polygon]
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"follow_mark.zone_polygons 存在非数字项: {polygon!r}"
+            ) from exc
+
+    vertex_count = len(polygon_points) // 2
+    if vertex_count < 3:
+        raise ValueError(
+            "follow_mark.zone_polygons 每个多边形至少需要3个顶点"
+        )
+    follow_mark_zone_polygon_sizes.append(vertex_count)
+    follow_mark_zone_polygon_points.extend(polygon_points)
+
 # 主雷达沿用历史参数键，避免影响既有配置与定位链路。
 primary_lidar_pose = launch_params["base_link2livox_frame"]
 right_lidar_pose = launch_params.get(
@@ -215,6 +370,12 @@ print(f"  Nav2消费右雷达: {dual_lidar_nav2_consume_right}")
 print(f"  双雷达障碍融合模式: {dual_lidar_obstacle_fusion_mode}")
 print(f"  全局代价地图STVL: {use_stvl}")
 print(f"  障碍过滤模板: {obstacle_profile}")
+print(
+    "  FollowMark: "
+    f"enable={follow_mark_enable}, mode={follow_mark_mode}, "
+    f"default={follow_mark_default_value}, zone={follow_mark_zone_value}, "
+    f"zones={len(follow_mark_zone_polygon_sizes) if follow_mark_zone_polygon_sizes else len(follow_mark_zone_rects) // 4}"
+)
 
 if use_sim:
     config_dir = os.path.join(rm_nav_bringup_dir, "config", "simulation")
@@ -783,7 +944,20 @@ bringup_fake_vel_transform_node = Node(
         'fake_base_frame': 'base_link_fake',
         'cmd_vel_topic': '/cmd_vel',
         'cmd_vel_out_topic': '/cmd_vel_chassis',
-        'local_plan_topic': '/local_plan'
+        'local_plan_topic': '/local_plan',
+        'follow_mark_enable': follow_mark_enable,
+        'follow_mark_topic': follow_mark_topic,
+        'follow_mark_manual_topic': follow_mark_manual_topic,
+        'follow_mark_hint_topic': follow_mark_hint_topic,
+        'follow_mark_mode': follow_mark_mode,
+        'follow_mark_input_stale_timeout_sec': follow_mark_input_stale_timeout_sec,
+        'follow_mark_enter_margin_m': follow_mark_enter_margin_m,
+        'follow_mark_exit_margin_m': follow_mark_exit_margin_m,
+        'follow_mark_default_value': follow_mark_default_value,
+        'follow_mark_zone_value': follow_mark_zone_value,
+        'follow_mark_zone_rects': follow_mark_zone_rects,
+        'follow_mark_zone_polygon_points': follow_mark_zone_polygon_points,
+        'follow_mark_zone_polygon_sizes': follow_mark_zone_polygon_sizes,
     }]
 )
 
