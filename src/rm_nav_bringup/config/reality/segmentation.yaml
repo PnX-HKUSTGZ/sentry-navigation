@@ -10,9 +10,7 @@ ground_segmentation:
     # Wave-road + chassis pitch/roll will increase apparent vertical residual.
     max_dist_to_line: 0.14      # maximum vertical distance of point to line to be considered ground.
 
-    sensor_height: 0.44         # REAL sensor height above ground.
-    # Wave-road (peak-valley 0.07m, wavelength 0.24m) has max |slope| ~= 0.916.
-    # Keep margin so slope transitions are still classified as ground.
+    sensor_height: 0.60         # REAL sensor height above ground.
     min_slope: -1.2             # minimum slope of a ground line.
     max_slope: 1.2              # maximum slope of a ground line.
     max_fit_error: 0.08         # maximum error of a point during line fit.
