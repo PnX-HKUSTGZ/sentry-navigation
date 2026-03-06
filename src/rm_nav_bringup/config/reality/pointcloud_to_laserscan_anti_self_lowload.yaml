@@ -5,6 +5,10 @@ pointcloud_to_laserscan:
     transform_tolerance: 0.03
     # 控制输入队列，避免处理落后后累积旧帧。
     queue_size: 2
+    # 低负载模板下，尽早发现并丢弃严重滞后的输入帧。
+    warn_cloud_delay_sec: 0.10
+    drop_cloud_delay_sec: 0.40
+    warn_processing_time_ms: 10.0
     min_height: -1.0
     max_height: 0.05
     angle_min: -3.14159  # -M_PI

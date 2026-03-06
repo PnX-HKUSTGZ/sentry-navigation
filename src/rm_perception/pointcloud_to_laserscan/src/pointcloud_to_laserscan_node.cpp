@@ -100,6 +100,9 @@ PointCloudToLaserScanNode::PointCloudToLaserScanNode(const rclcpp::NodeOptions &
   range_max_ = this->declare_parameter("range_max", std::numeric_limits<double>::max());
   inf_epsilon_ = this->declare_parameter("inf_epsilon", 1.0);
   use_inf_ = this->declare_parameter("use_inf", true);
+  warn_cloud_delay_sec_ = this->declare_parameter("warn_cloud_delay_sec", 0.15);
+  drop_cloud_delay_sec_ = this->declare_parameter("drop_cloud_delay_sec", -1.0);
+  warn_processing_time_ms_ = this->declare_parameter("warn_processing_time_ms", 12.0);
   exclude_range_min_ = this->declare_parameter("exclude_range_min", -1.0);
   exclude_range_max_ = this->declare_parameter("exclude_range_max", -1.0);
   auto exclude_angle_ranges_deg = this->declare_parameter(
@@ -120,6 +123,12 @@ PointCloudToLaserScanNode::PointCloudToLaserScanNode(const rclcpp::NodeOptions &
       this->get_logger(),
       "scan suppression enabled: %zu angle sectors, range [%.3f, %.3f] m",
       exclude_angle_ranges_rad_.size() / 2, exclude_range_min_, exclude_range_max_);
+  }
+  if (drop_cloud_delay_sec_ > 0.0) {
+    RCLCPP_INFO(
+      this->get_logger(),
+      "stale cloud drop enabled: drop_cloud_delay_sec=%.3f warn_cloud_delay_sec=%.3f",
+      drop_cloud_delay_sec_, warn_cloud_delay_sec_);
   }
 
   pub_ = this->create_publisher<sensor_msgs::msg::LaserScan>("scan", rclcpp::SensorDataQoS());
@@ -184,6 +193,27 @@ void PointCloudToLaserScanNode::subscriptionListenerThreadLoop()
 void PointCloudToLaserScanNode::cloudCallback(
   sensor_msgs::msg::PointCloud2::ConstSharedPtr cloud_msg)
 {
+  const auto callback_start = std::chrono::steady_clock::now();
+
+  if (cloud_msg->header.stamp.sec != 0 || cloud_msg->header.stamp.nanosec != 0) {
+    const auto now = this->get_clock()->now();
+    const auto stamp = rclcpp::Time(cloud_msg->header.stamp, now.get_clock_type());
+    const double cloud_delay_sec = (now - stamp).seconds();
+    if (warn_cloud_delay_sec_ > 0.0 && cloud_delay_sec > warn_cloud_delay_sec_) {
+      RCLCPP_WARN_THROTTLE(
+        this->get_logger(), *this->get_clock(), 2000,
+        "cloud_in delay is high: %.3fs (queue_size=%d). Consider reducing upstream load.",
+        cloud_delay_sec, input_queue_size_);
+    }
+    if (drop_cloud_delay_sec_ > 0.0 && cloud_delay_sec > drop_cloud_delay_sec_) {
+      RCLCPP_WARN_THROTTLE(
+        this->get_logger(), *this->get_clock(), 2000,
+        "dropping stale cloud_in: delay %.3fs exceeds drop_cloud_delay_sec %.3fs",
+        cloud_delay_sec, drop_cloud_delay_sec_);
+      return;
+    }
+  }
+
   // build laserscan output
   auto scan_msg = std::make_unique<sensor_msgs::msg::LaserScan>();
   scan_msg->header = cloud_msg->header;
@@ -288,6 +318,18 @@ void PointCloudToLaserScanNode::cloudCallback(
       scan_msg->ranges[index] = range;
     }
   }
+
+  const auto callback_end = std::chrono::steady_clock::now();
+  const double callback_cost_ms =
+    std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(
+    callback_end - callback_start).count();
+  if (warn_processing_time_ms_ > 0.0 && callback_cost_ms > warn_processing_time_ms_) {
+    RCLCPP_WARN_THROTTLE(
+      this->get_logger(), *this->get_clock(), 2000,
+      "pointcloud_to_laserscan callback cost %.2f ms (angle_increment=%.6f, queue_size=%d)",
+      callback_cost_ms, angle_increment_, input_queue_size_);
+  }
+
   pub_->publish(std::move(scan_msg));
 }
 

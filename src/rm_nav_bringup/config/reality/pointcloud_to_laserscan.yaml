@@ -3,6 +3,10 @@ pointcloud_to_laserscan:
     target_frame: 'livox_frame'
     transform_tolerance: 0.03
     queue_size: 3
+    # Runtime lag diagnostics: warn when input cloud is old, optionally drop very old frames.
+    warn_cloud_delay_sec: 0.12
+    drop_cloud_delay_sec: 0.50
+    warn_processing_time_ms: 12.0
     min_height: -1.0
     max_height: 0.1
     angle_min: -3.14159  # -M_PI

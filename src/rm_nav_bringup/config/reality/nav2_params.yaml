@@ -258,7 +258,9 @@ local_costmap:
     ros__parameters:
       update_frequency: 20.0
       publish_frequency: 10.0
-      global_frame: map
+      # Keep local planning in odom to reduce dependence on map->odom continuity
+      # under heavy load / relocalization jitter.
+      global_frame: odom
       robot_base_frame: base_link_fake
       use_sim_time: False
       rolling_window: true
@@ -294,7 +296,8 @@ local_costmap:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 5.0
         inflation_radius: 0.6
-      always_send_full_costmap: true
+      # Reduce DDS bandwidth and RViz/render pressure in real runs.
+      always_send_full_costmap: false
 
 global_costmap:
   global_costmap:
@@ -320,7 +323,7 @@ global_costmap:
         update_footprint_enabled: true
         combination_method:       1                                 # 1=max, 0=override
         origin_z:                 0.0                               # 单位为米
-        publish_voxel_map:        true                              # default false, 是否发布体素地图
+        publish_voxel_map:        false                             # default false, keep disabled in real runs to lower CPU.
         transform_tolerance:      0.2                               # 单位为秒
         mapping_mode:             false                             # default off, saves map not for navigation
         map_save_duration:        60.0                              # default 60s, how often to autosave
@@ -360,7 +363,7 @@ global_costmap:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 8.0
         inflation_radius: 0.7
-      always_send_full_costmap: True
+      always_send_full_costmap: False
 
 map_saver:
   ros__parameters:

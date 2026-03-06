@@ -98,6 +98,9 @@ private:
   double inf_epsilon_;
   double exclude_range_min_, exclude_range_max_;
   std::vector<double> exclude_angle_ranges_rad_;
+  double warn_cloud_delay_sec_;
+  double drop_cloud_delay_sec_;
+  double warn_processing_time_ms_;
 };
 
 }  // namespace pointcloud_to_laserscan

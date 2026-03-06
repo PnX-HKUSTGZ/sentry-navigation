@@ -265,7 +265,7 @@ Visualization Manager:
     - Alpha: 0.6000000238418579
       Class: rviz_default_plugins/Map
       Color Scheme: map
-      Draw Behind: true
+      Draw Behind: false
       Enabled: true
       Name: Map
       Topic:

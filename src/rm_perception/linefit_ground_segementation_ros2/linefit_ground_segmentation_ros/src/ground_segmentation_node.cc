@@ -1,4 +1,5 @@
 #include <memory>
+#include <chrono>
 
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <pcl/common/transforms.h>
@@ -26,6 +27,9 @@ public:
   GroundSegmentationParams params_;
   std::shared_ptr<GroundSegmentation> segmenter_;
   std::string gravity_aligned_frame_;
+  double warn_input_delay_sec_;
+  double drop_input_delay_sec_;
+  double warn_processing_time_ms_;
 };
 
 SegmentationNode::SegmentationNode(const rclcpp::NodeOptions &node_options)
@@ -69,6 +73,12 @@ SegmentationNode::SegmentationNode(const rclcpp::NodeOptions &node_options)
   obstacle_topic =
       this->declare_parameter("obstacle_output_topic", "obstacle_cloud");
   input_topic = this->declare_parameter("input_topic", "input_cloud");
+  warn_input_delay_sec_ =
+      this->declare_parameter("warn_input_delay_sec", 0.15);
+  drop_input_delay_sec_ =
+      this->declare_parameter("drop_input_delay_sec", -1.0);
+  warn_processing_time_ms_ =
+      this->declare_parameter("warn_processing_time_ms", 15.0);
   cloud_sub_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
       input_topic, rclcpp::SensorDataQoS(),
       std::bind(&SegmentationNode::scanCallback, this, std::placeholders::_1));
@@ -83,6 +93,25 @@ SegmentationNode::SegmentationNode(const rclcpp::NodeOptions &node_options)
 
 void SegmentationNode::scanCallback(
     const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
+  const auto callback_start = std::chrono::steady_clock::now();
+  if (msg->header.stamp.sec != 0 || msg->header.stamp.nanosec != 0) {
+    const auto now = this->get_clock()->now();
+    const auto stamp = rclcpp::Time(msg->header.stamp, now.get_clock_type());
+    const double input_delay_sec = (now - stamp).seconds();
+    if (warn_input_delay_sec_ > 0.0 && input_delay_sec > warn_input_delay_sec_) {
+      RCLCPP_WARN_THROTTLE(
+          this->get_logger(), *this->get_clock(), 2000,
+          "segmentation input delay is high: %.3fs", input_delay_sec);
+    }
+    if (drop_input_delay_sec_ > 0.0 && input_delay_sec > drop_input_delay_sec_) {
+      RCLCPP_WARN_THROTTLE(
+          this->get_logger(), *this->get_clock(), 2000,
+          "dropping stale segmentation input: delay %.3fs exceeds %.3fs",
+          input_delay_sec, drop_input_delay_sec_);
+      return;
+    }
+  }
+
   pcl::PointCloud<pcl::PointXYZ> cloud;
   pcl::fromROSMsg(*msg, cloud);
   pcl::PointCloud<pcl::PointXYZ> cloud_transformed;
@@ -135,6 +164,17 @@ void SegmentationNode::scanCallback(
   obstacle_msg->header = msg->header;
   ground_pub_->publish(*ground_msg);
   obstacle_pub_->publish(*obstacle_msg);
+
+  const auto callback_end = std::chrono::steady_clock::now();
+  const double callback_cost_ms =
+      std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(
+          callback_end - callback_start)
+          .count();
+  if (warn_processing_time_ms_ > 0.0 && callback_cost_ms > warn_processing_time_ms_) {
+    RCLCPP_WARN_THROTTLE(
+        this->get_logger(), *this->get_clock(), 2000,
+        "ground_segmentation callback cost %.2f ms", callback_cost_ms);
+  }
 }
 
 int main(int argc, char **argv) {

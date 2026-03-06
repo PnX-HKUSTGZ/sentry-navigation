@@ -20,6 +20,9 @@
     line_search_angle: 0.8
 
     gravity_aligned_frame: ""
+    warn_input_delay_sec: 0.10
+    drop_input_delay_sec: 0.40
+    warn_processing_time_ms: 15.0
 
     latch: false
     visualize: false

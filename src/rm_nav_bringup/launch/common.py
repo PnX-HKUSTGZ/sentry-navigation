@@ -370,6 +370,11 @@ print(f"  Nav2消费右雷达: {dual_lidar_nav2_consume_right}")
 print(f"  双雷达障碍融合模式: {dual_lidar_obstacle_fusion_mode}")
 print(f"  全局代价地图STVL: {use_stvl}")
 print(f"  障碍过滤模板: {obstacle_profile}")
+if obstacle_profile == "cpu_stress":
+    print(
+        "  [提示] cpu_stress 模板用于压测，会显著提高消息速率与CPU负载，"
+        "不适合作为实车稳定导航默认配置。"
+    )
 print(
     "  FollowMark: "
     f"enable={follow_mark_enable}, mode={follow_mark_mode}, "
