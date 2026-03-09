@@ -117,7 +117,8 @@ if resolved_map_name != map_name:
     print(f"[信息] 未找到地图资源 {map_name}.yaml，回退使用 {resolved_map_name}.yaml")
     map_name = resolved_map_name
 
-mode = launch_params.get("mode", "nav")  # 获取运行模式 (mapping/nav)，默认为nav
+_env_mode = os.environ.get("RM_NAV_MODE", "").strip()
+mode = _env_mode if _env_mode else launch_params.get("mode", "nav")  # 获取运行模式 (mapping/nav)，默认为nav
 _env_lio = os.environ.get("RM_NAV_LIO", "").strip()
 lio = _env_lio if _env_lio else launch_params.get("lio", "fastlio")  # 激光雷达惯性里程计 (pointlio/fastlio)，默认为fastlio
 _env_localization = os.environ.get("RM_NAV_LOCALIZATION", "").strip()
@@ -370,6 +371,11 @@ print(f"  Nav2消费右雷达: {dual_lidar_nav2_consume_right}")
 print(f"  双雷达障碍融合模式: {dual_lidar_obstacle_fusion_mode}")
 print(f"  全局代价地图STVL: {use_stvl}")
 print(f"  障碍过滤模板: {obstacle_profile}")
+if mode == "mapping" and localization != "slam_toolbox":
+    print(
+        "  [警告] mode=mapping 时，localization 参数不会用于定位链路；"
+        "当前建图链路固定使用 slam_toolbox 的 async mapping。"
+    )
 if obstacle_profile == "cpu_stress":
     print(
         "  [提示] cpu_stress 模板用于压测，会显著提高消息速率与CPU负载，"

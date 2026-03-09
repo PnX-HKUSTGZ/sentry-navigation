@@ -74,6 +74,10 @@ def _bool_from_launch_params(params: dict, key: str, default: bool) -> bool:
 
 
 def _launch_setup(context, *args, **kwargs):
+    mode_override = LaunchConfiguration('mode').perform(context).strip()
+    if mode_override:
+        os.environ['RM_NAV_MODE'] = mode_override
+
     world_override = LaunchConfiguration('world').perform(context).strip()
     if world_override:
         os.environ['RM_NAV_WORLD'] = world_override
@@ -251,6 +255,15 @@ def _launch_setup(context, *args, **kwargs):
 
     if enable_nav2:
         print("7. 启动Navigation2导航系统...")
+        if mode == "mapping":
+            print(
+                "7. [警告] 当前为 mapping + Nav2 混跑，系统负载与TF时序压力会显著上升；"
+                "请仅在建图联调时短时使用。"
+            )
+            if not use_sim:
+                print(
+                    "7. [建议] 实车稳定回归优先使用 mode:=nav localization:=amcl nav_rviz:=false。"
+                )
         if nav_start_delay_override:
             try:
                 nav_start_delay = float(nav_start_delay_override)
@@ -292,6 +305,14 @@ def generate_launch_description():
     ).strip() or 'nav2.rviz'
 
     ld = LaunchDescription()
+
+    ld.add_action(
+        DeclareLaunchArgument(
+            'mode',
+            default_value='',
+            description='Run mode override: nav|mapping. If empty, uses config/launch_params.yaml.'
+        )
+    )
 
     ld.add_action(
         DeclareLaunchArgument(

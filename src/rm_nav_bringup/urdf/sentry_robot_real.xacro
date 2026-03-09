@@ -146,9 +146,10 @@
   <!-- Livox-Mid360  -->
   <link name="livox_frame">
     <visual>
-      <origin xyz="0.025 -0.0265 -0.025" rpy="${pi/2} 0 ${pi}"/>
+      <origin xyz="0.0 0.0 0.0" rpy="0 0 0"/>
       <geometry>
-        <mesh filename="package://pb_rm_simulation/meshes/mid360.stl" scale="0.001 0.001 0.001"/>
+        <!-- Use primitive geometry to avoid RViz stalls when external STL assets are unavailable/corrupted. -->
+        <cylinder length="0.06" radius="0.035"/>
       </geometry>
       <material name="blue">
         <color rgba="0 0 1.0 1" />
@@ -165,9 +166,10 @@
   <xacro:if value="$(arg dual_lidar)">
     <link name="livox_right_frame">
       <visual>
-        <origin xyz="0.025 -0.0265 -0.025" rpy="${pi/2} 0 ${pi}"/>
+        <origin xyz="0.0 0.0 0.0" rpy="0 0 0"/>
         <geometry>
-          <mesh filename="package://pb_rm_simulation/meshes/mid360.stl" scale="0.001 0.001 0.001"/>
+          <!-- Keep same placeholder for right lidar visual. -->
+          <cylinder length="0.06" radius="0.035"/>
         </geometry>
         <material name="blue">
           <color rgba="0 0 1.0 1" />
