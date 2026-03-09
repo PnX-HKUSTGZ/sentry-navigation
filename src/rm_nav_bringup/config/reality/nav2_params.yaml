@@ -10,16 +10,17 @@ amcl:
     beam_skip_distance: 0.5
     beam_skip_error_threshold: 0.9
     beam_skip_threshold: 0.3
-    do_beamskip: false
+    # Under timing jitter, skip-beam can avoid AMCL overreacting to sparse/outlier scans.
+    do_beamskip: true
     global_frame_id: "map"
     lambda_short: 0.1
     laser_likelihood_max_dist: 2.0
     laser_max_range: 100.0
     laser_min_range: -1.0
     laser_model_type: "likelihood_field"
-    max_beams: 60
-    max_particles: 2000
-    min_particles: 500
+    max_beams: 48
+    max_particles: 1600
+    min_particles: 400
     odom_frame_id: "odom"
     pf_err: 0.05
     pf_z: 0.99
@@ -30,9 +31,9 @@ amcl:
     save_pose_rate: 0.5
     sigma_hit: 0.2
     tf_broadcast: true
-    transform_tolerance: 1.0
-    update_min_a: 0.2
-    update_min_d: 0.25
+    transform_tolerance: 1.5
+    update_min_a: 0.25
+    update_min_d: 0.30
     z_hit: 0.5
     z_max: 0.05
     z_rand: 0.5
@@ -256,13 +257,14 @@ controller_server:
 local_costmap:
   local_costmap:
     ros__parameters:
-      update_frequency: 20.0
-      publish_frequency: 10.0
+      update_frequency: 15.0
+      publish_frequency: 5.0
       # Keep local planning in odom to reduce dependence on map->odom continuity
       # under heavy load / relocalization jitter.
       global_frame: odom
       robot_base_frame: base_link_fake
       use_sim_time: False
+      transform_tolerance: 0.35
       rolling_window: true
       width: 5
       height: 5
@@ -275,6 +277,8 @@ local_costmap:
         observation_sources: scan lidar_right
         scan:
           topic: /scan
+          expected_update_rate: 0.0
+          observation_persistence: 0.12
           raytrace_max_range: 6.0
           obstacle_max_range: 6.0
           obstacle_min_range: 0.1
@@ -285,6 +289,8 @@ local_costmap:
           data_type: "LaserScan"
         lidar_right:
           topic: /segmentation/obstacle_right
+          expected_update_rate: 0.0
+          observation_persistence: 0.08
           raytrace_max_range: 6.0
           obstacle_max_range: 4.0
           obstacle_min_range: 0.45
@@ -302,11 +308,12 @@ local_costmap:
 global_costmap:
   global_costmap:
     ros__parameters:
-      update_frequency: 5.0
-      publish_frequency: 2.0
+      update_frequency: 3.0
+      publish_frequency: 1.0
       global_frame: map
       robot_base_frame: base_link_fake
       use_sim_time: False
+      transform_tolerance: 0.35
       robot_radius: 0.2
       resolution: 0.04
       track_unknown_space: true
@@ -324,7 +331,7 @@ global_costmap:
         combination_method:       1                                 # 1=max, 0=override
         origin_z:                 0.0                               # 单位为米
         publish_voxel_map:        false                             # default false, keep disabled in real runs to lower CPU.
-        transform_tolerance:      0.2                               # 单位为秒
+        transform_tolerance:      0.35                              # 单位为秒
         mapping_mode:             false                             # default off, saves map not for navigation
         map_save_duration:        60.0                              # default 60s, how often to autosave
         observation_sources:      livox_mark livox_clear
@@ -337,7 +344,7 @@ global_costmap:
           min_obstacle_height: 0.2                                  # default 0, meters
           max_obstacle_height: 2.0                                  # default 3, meters
           expected_update_rate: 0.0                                 # default 0, if not updating at this rate at least, remove from buffer
-          observation_persistence: 0.0                              # default 0, use all measurements taken during now-value, 0=latest
+          observation_persistence: 0.10                             # Smooth short queue jitter while keeping obstacle freshness.
           inf_is_valid: false                                       # default false, for laser scans
           filter: "voxel"                                           # default passthrough, apply "voxel", "passthrough", or no filter to sensor data, recommend on
           voxel_min_points: 0                                       # default 0, minimum points per voxel for voxel filter
