@@ -19,17 +19,19 @@
             imu_en: true
             start_in_aggressive_motion: false # if true, a preknown gravity should be provided in following gravity_init
             extrinsic_est_en: false # for aggressive motion, set this variable false
-            imu_time_inte: 0.01612 # = 1 / frequency of IMU
+            # Gazebo IMU is configured at 100Hz in simulation URDF; keep integration period aligned.
+            imu_time_inte: 0.01 # = 1 / frequency of IMU
             satu_acc: 3.0 # the saturation value of IMU's acceleration. not related to the units
             satu_gyro: 35.0 # the saturation value of IMU's angular velocity. not related to the units
             acc_norm: 9.81 # 1.0 for g as unit, 9.81 for m/s^2 as unit of the IMU's acceleration
-            lidar_meas_cov: 0.01 # 0.001
+            # Slightly increase lidar trust against pitch/roll transients on wave terrain.
+            lidar_meas_cov: 0.008 # 0.001
             acc_cov_output: 500.0
             gyr_cov_output: 1000.0
             b_acc_cov: 0.0001
             b_gyr_cov: 0.0001
-            imu_meas_acc_cov: 0.6 #0.1 # 2
-            imu_meas_omg_cov: 0.6 #0.1 # 2
+            imu_meas_acc_cov: 0.8 #0.1 # 2
+            imu_meas_omg_cov: 0.5 #0.1 # 2
             gyr_cov_input: 0.01 # for IMU as input model
             acc_cov_input: 0.1 # for IMU as input model
             plane_thr: 0.1 # 0.05, the threshold for plane criteria, the smaller, the flatter a plane
@@ -45,7 +47,8 @@
                           0., 0., 1.]
 
         odometry:
-            publish_odometry_without_downsample: false
+            # Keep odom output fresher for downstream AMCL/costmap timestamp matching.
+            publish_odometry_without_downsample: true
 
         publish:
             path_en: true                 # false: close the path output
